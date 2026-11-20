@@ -21,6 +21,7 @@ write_file tls.sh /usr/local/sbin/naverwebtoon-backend-tls
 cat <<'BOOTSTRAP_END'
 chmod 0755 /usr/local/sbin/naverwebtoon-backend-update /usr/local/sbin/naverwebtoon-backend-tls
 nginx -t
+systemctl enable --now nginx.service
 systemctl reload nginx
 systemctl daemon-reload
 systemctl enable naverwebtoon-backend.service
