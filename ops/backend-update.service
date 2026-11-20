@@ -1,0 +1,16 @@
+[Unit]
+Description=Install signed naverwebtoon 2.0 backend release
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/naverwebtoon-backend-update
+TimeoutStartSec=100
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ReadWritePaths=/opt/naverwebtoon-backend

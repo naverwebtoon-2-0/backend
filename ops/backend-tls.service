@@ -1,0 +1,10 @@
+[Unit]
+Description=Issue and renew naverwebtoon 2.0 IP certificate
+After=network-online.target nginx.service
+Wants=network-online.target
+Requires=nginx.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/naverwebtoon-backend-tls
+TimeoutStartSec=4min
