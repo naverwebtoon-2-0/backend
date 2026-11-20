@@ -1,0 +1,28 @@
+[Unit]
+Description=naverwebtoon 2.0 backend
+After=network.target
+ConditionFileIsExecutable=/opt/naverwebtoon-backend/current/backend-linux-amd64
+
+[Service]
+ExecStart=/opt/naverwebtoon-backend/current/backend-linux-amd64
+DynamicUser=true
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+CapabilityBoundingSet=
+MemoryMax=256M
+Restart=on-failure
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
