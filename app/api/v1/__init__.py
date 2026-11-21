@@ -10,10 +10,24 @@ from app.api.v1 import (
     me,
     public,
     publish,
+    regenerate,
     series,
     studio,
 )
 
 router = APIRouter()
-for module in (auth, me, series, episodes, images, jobs, studio, characters, catalog, publish, public):
+for module in (
+    auth,
+    me,
+    series,
+    episodes,
+    images,
+    jobs,
+    studio,
+    characters,
+    catalog,
+    publish,
+    regenerate,
+    public,
+):
     router.include_router(module.router)

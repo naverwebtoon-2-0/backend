@@ -9,13 +9,13 @@ import json
 from typing import Any
 
 from fastapi import Request
-from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.errors import ApiError, validation_error
+from app.jsonutil import encode
 from app.models import IdempotencyKey, User
 
 
@@ -28,7 +28,7 @@ class Idempotency:
             raise validation_error("Idempotency-Key 길이가 올바르지 않습니다.", field="Idempotency-Key")
         self.method = request.method
         self.path = request.url.path
-        payload = json.dumps(jsonable_encoder(body), sort_keys=True, ensure_ascii=False)
+        payload = json.dumps(encode(body), sort_keys=True, ensure_ascii=False)
         self.request_hash = hashlib.sha256(f"{self.method} {self.path}\n{payload}".encode()).hexdigest()
 
     def _lookup(self) -> IdempotencyKey | None:
@@ -53,7 +53,7 @@ class Idempotency:
 
     def commit(self, status_code: int, content: Any) -> JSONResponse:
         """결과를 키와 함께 저장하고 커밋한다. 동시에 같은 키가 처리되었으면 그 응답을 돌려준다."""
-        encoded = jsonable_encoder(content)
+        encoded = encode(content)
         if self.key is not None:
             self.db.add(
                 IdempotencyKey(

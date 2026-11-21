@@ -5,6 +5,9 @@ def test_series_crud(client):
     h = signup(client, "s@example.com")
     s = create_series(client, h)
     assert s["genre"] == "fantasy" and s["serial_status"] == "ongoing" and s["episode_count"] == 0
+    # 시각은 UTC(Z)로 통일 (생성 응답과 조회 응답 모두)
+    assert s["created_at"].endswith("Z")
+    assert client.get(f"/v1/series/{s['id']}", headers=h).json()["created_at"] == s["created_at"]
     assert client.get(f"/v1/series/{s['id']}", headers=h).json()["title"] == "별빛 아래 우리"
     res = client.patch(
         f"/v1/series/{s['id']}", json={"serial_status": "hiatus", "title": "새 제목"}, headers=h

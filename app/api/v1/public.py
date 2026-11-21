@@ -1,7 +1,6 @@
 """독자용 공개 API (§9.1~9.3). 비로그인 허용, 게시 스냅샷만 노출한다."""
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
@@ -9,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db import get_db
 from app.errors import not_found, validation_error
+from app.jsonutil import encode
 from app.models import Episode, EpisodePlayback, Series, User
 from app.models.series import GENRES, SERIAL_STATUSES
 from app.pagination import check_limit, paginate
@@ -49,7 +49,7 @@ def _series_view(series: Series, author: User | None, count: int) -> dict:
 
 
 def _json(content: dict) -> JSONResponse:
-    return JSONResponse(jsonable_encoder(content), headers=_PRIVATE)
+    return JSONResponse(encode(content), headers=_PRIVATE)
 
 
 @router.get("/series", response_model=Page[PublicSeriesOut])

@@ -14,7 +14,13 @@ class Base(DeclarativeBase):
 @lru_cache
 def get_engine() -> Engine:
     settings = get_settings()
-    return create_engine(settings.database_url, pool_pre_ping=True, pool_size=5, max_overflow=10)
+    return create_engine(
+        settings.database_url,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=10,
+        connect_args={"options": "-c timezone=UTC"},  # 시각은 UTC로 저장·조회
+    )
 
 
 @lru_cache
