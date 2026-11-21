@@ -8,5 +8,4 @@
 tests
 docs
 ops
-*.go
-go.mod
+.github

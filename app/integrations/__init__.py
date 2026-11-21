@@ -6,7 +6,7 @@
 from dataclasses import dataclass
 
 from app.config import Settings, get_settings
-from app.integrations.dubbing import ClovaDubbingClient, DubbingClient, FakeDubbingClient
+from app.integrations.dubbing import ClovaVoiceClient, DubbingClient, FakeDubbingClient
 from app.integrations.ocr import ClovaOcrClient, FakeOcrClient, OcrClient
 from app.integrations.storage import FakeStorage, S3StorageClient, StorageClient
 from app.integrations.structure import ClovaStructureClient, FakeStructureClient, StructureClient
@@ -29,7 +29,7 @@ def build_integrations(settings: Settings) -> Integrations:
     else:
         storage = FakeStorage(settings.fake_storage_dir, settings.public_base_url, settings.jwt_secret)
     if settings.ai_backend == "clova":
-        dubbing: DubbingClient = ClovaDubbingClient(settings)
+        dubbing: DubbingClient = ClovaVoiceClient(settings, storage=storage)
         tags = [p["tag"] for p in dubbing.list_sfx_presets()]
         return Integrations(storage, ClovaOcrClient(settings), ClovaStructureClient(settings, tags), dubbing)
     return Integrations(storage, FakeOcrClient(), FakeStructureClient(), FakeDubbingClient())

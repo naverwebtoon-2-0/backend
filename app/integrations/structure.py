@@ -93,7 +93,8 @@ _SYSTEM_PROMPT = """너는 웹툰 원고의 OCR 결과를 정리하는 도우미
 
 
 class ClovaStructureClient:
-    def __init__(self, settings: Settings, sfx_tags: list[str]) -> None:
+    def __init__(self, settings: Settings, sfx_tags: list[str], http: httpx.Client | None = None) -> None:
+        self.http = http or httpx.Client(timeout=settings.ai_timeout_seconds)
         self.url = settings.clova_studio_url
         self.api_key = settings.clova_studio_api_key
         self.timeout = settings.ai_timeout_seconds
@@ -121,7 +122,7 @@ class ClovaStructureClient:
         }
 
         def call() -> dict:
-            res = httpx.post(
+            res = self.http.post(
                 self.url,
                 json=body,
                 headers={"Authorization": f"Bearer {self.api_key}"},
@@ -131,6 +132,9 @@ class ClovaStructureClient:
             return res.json()
 
         data = with_retries("clova_studio", call, self.max_retries)
+        status = (data.get("status") or {}).get("code")
+        if status not in (None, "20000"):
+            raise UpstreamError("clova_studio", f"status {status}", retryable=False)
         try:
             content = data["result"]["message"]["content"]
             parsed = json.loads(content[content.index("{") : content.rindex("}") + 1])

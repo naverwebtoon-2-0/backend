@@ -55,7 +55,11 @@ def create_app() -> FastAPI:
     from app.api.v1 import router as v1_router
 
     app.include_router(v1_router)
-    if settings.storage_backend == "fake" and not settings.is_production:
+    if settings.storage_backend == "fake":
+        # 가짜 저장소는 HMAC 서명 URL로만 접근된다.
+        # 운영에서는 Object Storage 키를 넣고 STORAGE_BACKEND=s3로 바꾼다.
+        if settings.is_production:
+            logger.warning("STORAGE_BACKEND=fake in production: uploads are kept on the local volume")
         from app.api.fake_storage import router as fake_storage_router
 
         app.include_router(fake_storage_router)

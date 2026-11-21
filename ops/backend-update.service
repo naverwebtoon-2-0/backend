@@ -1,16 +1,16 @@
 [Unit]
 Description=Install signed naverwebtoon 2.0 backend release
-After=network-online.target
+After=network-online.target docker.service
 Wants=network-online.target
+Requires=docker.service
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/naverwebtoon-backend-update
-TimeoutStartSec=100
+# 이미지 다운로드(수백 MB)·docker load·마이그레이션·헬스 체크까지 포함
+TimeoutStartSec=20min
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=strict
 ProtectHome=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
-ReadWritePaths=/opt/naverwebtoon-backend

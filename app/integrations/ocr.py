@@ -43,7 +43,8 @@ class FakeOcrClient:
 class ClovaOcrClient:
     """CLOVA OCR General (V2). invoke URL과 secret은 콘솔의 Domain 설정에서 발급한다."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, http: httpx.Client | None = None) -> None:
+        self.http = http or httpx.Client(timeout=settings.ai_timeout_seconds)
         self.url = settings.clova_ocr_invoke_url
         self.secret = settings.clova_ocr_secret
         self.timeout = settings.ai_timeout_seconds
@@ -64,7 +65,9 @@ class ClovaOcrClient:
         }
 
         def call() -> dict:
-            res = httpx.post(self.url, json=body, headers={"X-OCR-SECRET": self.secret}, timeout=self.timeout)
+            res = self.http.post(
+                self.url, json=body, headers={"X-OCR-SECRET": self.secret}, timeout=self.timeout
+            )
             res.raise_for_status()
             return res.json()
 

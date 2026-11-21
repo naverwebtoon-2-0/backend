@@ -55,9 +55,12 @@ class Settings(BaseSettings):
     clova_ocr_secret: str = ""
     clova_studio_url: str = "https://clovastudio.stream.ntruss.com/v3/chat-completions/HCX-005"
     clova_studio_api_key: str = ""
-    clova_dubbing_url: str = ""
-    clova_dubbing_client_id: str = ""
-    clova_dubbing_client_secret: str = ""
+    # 음성 합성: CLOVA Voice Premium (CLOVA Dubbing은 실시간 API 미제공)
+    clova_voice_url: str = "https://naveropenapi.apigw.ntruss.com/tts-premium/v1/tts"
+    clova_voice_client_id: str = ""
+    clova_voice_client_secret: str = ""
+    # 효과음 프리셋 음원 위치 (Object Storage, {prefix}/{tag}.wav). 없으면 내장 생성기 사용
+    sfx_preset_prefix: str = "sfx/presets"
     ai_timeout_seconds: float = 30.0
     ai_max_retries: int = 3
 

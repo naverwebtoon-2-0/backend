@@ -96,7 +96,9 @@ python scripts/export_openapi.py --check
 | `MAX_IMAGE_BYTES` / `MAX_IMAGES_PER_EPISODE` | `20971520` / `100` | 업로드 제한 (PNG·JPEG·WebP) |
 | `CLOVA_OCR_INVOKE_URL` / `CLOVA_OCR_SECRET` | | CLOVA OCR |
 | `CLOVA_STUDIO_URL` / `CLOVA_STUDIO_API_KEY` | HCX-005 chat completions | CLOVA Studio |
-| `CLOVA_DUBBING_URL` / `CLOVA_DUBBING_CLIENT_ID` / `CLOVA_DUBBING_CLIENT_SECRET` | | CLOVA Dubbing (클라이언트는 스켈레톤) |
+| `CLOVA_VOICE_URL` | `https://naveropenapi.apigw.ntruss.com/tts-premium/v1/tts` | CLOVA Voice Premium TTS |
+| `CLOVA_VOICE_CLIENT_ID` / `CLOVA_VOICE_CLIENT_SECRET` | | CLOVA Voice 키 (NCP Application의 Client ID·Secret) |
+| `SFX_PRESET_PREFIX` | `sfx/presets` | 효과음 프리셋 음원 위치 (`{prefix}/{tag}.wav`) |
 | `AI_TIMEOUT_SECONDS` / `AI_MAX_RETRIES` | `30` / `3` | 외부 호출 타임아웃·지수 백오프 재시도 |
 | `LOW_OCR_CONFIDENCE_THRESHOLD` | `0.8` | 문제 장면 판정 기준 |
 | `QUOTA_DUBBING_CHARS` / `QUOTA_OCR_IMAGES` | `100000` / `500` | 월 쿼터 (초과 시 429) |
@@ -115,21 +117,45 @@ python scripts/export_openapi.py --check
 | M4 | §7 재생성(stale/lines/all, 라인 단건, 작업 중 수정 폐기), 쿼터, §9.4~9.5 독자 설정·진행 위치, 구조화 로깅 | 완료 |
 | 확장 | §10 Papago 번역 | 미구현 (범위 밖) |
 
-아직 남은 일 (자세한 내용은 `docs/open-questions.md`):
+API 키를 넣기 전까지는 `AI_BACKEND=fake`, `STORAGE_BACKEND=fake`로 동작한다. 키를 넣는 방법은 아래 "운영 배포"를 참고한다.
 
-- CLOVA Dubbing 실제 클라이언트 (사양 확정 필요), CLOVA OCR·Studio 실제 키 검증
-- Docker 기반 배포로 CI/CD(`.github/workflows`, `ops/`) 전환 — 현재 워크플로는 기존 Go 서버 기준이다
-- `docker compose up` 실행 검증 (작성 환경에 Docker가 없어 확인하지 못함)
+## 외부 연동
 
-## 기존 Go 서버와 네이버클라우드 배포 (레거시)
+| 기능 | 구현 | 필요한 값 |
+|---|---|---|
+| 원고 저장 | Naver Object Storage (S3 호환, presigned PUT/GET) | `STORAGE_BUCKET`, `STORAGE_ACCESS_KEY`, `STORAGE_SECRET_KEY`, `STORAGE_BACKEND=s3` |
+| 글자 인식 | CLOVA OCR General V2 | `CLOVA_OCR_INVOKE_URL`, `CLOVA_OCR_SECRET` |
+| 대사·인물 정리 | CLOVA Studio Chat Completions v3 (HCX-005) | `CLOVA_STUDIO_API_KEY` |
+| 음성 | CLOVA Voice Premium TTS (화자·속도·높낮이·감정·감정 강도, 200자 초과 문장은 나눠 합성 후 연결) | `CLOVA_VOICE_CLIENT_ID`, `CLOVA_VOICE_CLIENT_SECRET` |
+| 효과음 | Object Storage의 `sfx/presets/{tag}.wav`, 없으면 내장 생성 음원 | (선택) 프리셋 음원 업로드 |
 
-저장소의 `main.go`, `.github/workflows/backend.yml`, `ops/`는 FastAPI 전환 이전의 Go `/healthz` 서버와 배포 자동화다.
-`main`, `dev` 및 두 브랜치 대상 PR에서 CI가 Go 테스트·빌드를 실행하고, `main`은 Ed25519로 서명한 Linux amd64 바이너리를
-GitHub Release로 발행한다. 인스턴스는 약 2분마다 릴리스를 확인해 서명·해시를 검사한 뒤 적용하고, 이상이 있으면 직전 릴리스로 되돌린다.
+`AI_BACKEND=clova`로 바꾸면 위 클라이언트를 쓴다. CLOVA Dubbing은 웹 콘텐츠 제작 서비스라 실시간 API가 없어
+음성은 NCP 안내대로 CLOVA Voice로 만든다 (`docs/open-questions.md` G1).
 
-1. `bash ops/render-init-script.sh` 출력으로 Server의 Linux Init Script를 생성한다.
-2. Ubuntu 24.04 x86-64 서버를 Public Subnet에 만들고 Init Script와 공인 IPv4를 지정한다. 전용 ACG에서 인바운드 TCP 80(ACME)과 443(HTTPS)을 허용한다.
-3. HTTPS가 열린 뒤 양쪽 저장소의 Actions 변수 `NCP_BACKEND_ORIGIN`을 설정하고 `main` 워크플로를 다시 실행한다.
+## 운영 배포 (네이버클라우드)
 
-배포 상태는 `journalctl -u naverwebtoon-backend-update.service`, 인증서는 `journalctl -u naverwebtoon-backend-tls.service`로 확인한다.
-이 배포 경로를 FastAPI 서버용으로 바꾸는 작업은 아직 하지 않았다.
+서버에 SSH나 GitHub 토큰 없이, 서버가 서명된 릴리스를 직접 받아 적용하는 방식이다.
+
+```
+push main → CI: 테스트 · docker build · docker compose up 검증(로컬용·운영용 compose)
+          → release: 이미지(docker save)·배포 묶음(compose + DB 초기화)·manifest를 Ed25519로 서명해 GitHub Release 발행
+서버 (2분마다, ops/update.sh): main 커밋 확인 → 서명·해시 검증 → docker load
+          → migrate(run --rm) → docker compose up -d --wait → /healthz revision·/readyz 확인
+          → 실패하면 직전 릴리스로 되돌림
+```
+
+1. (선택) `cp ops/secrets.env.example ops/secrets.env` 후 API 키·CORS origin·초대 코드를 채운다. 이 파일은 커밋되지 않는다.
+2. `bash ops/render-init-script.sh > init-script.sh`로 Linux Init Script를 만든다. `ops/secrets.env`가 있으면 그 값이 서버 환경변수에 들어간다.
+3. Ubuntu 24.04 x86-64 서버(메모리 2GB 이상 권장: PostgreSQL + API + 워커)를 Public Subnet에 만들고 Init Script와 공인 IPv4를 지정한다.
+   전용 ACG 인바운드는 TCP 80(ACME)과 443(HTTPS)만 허용한다.
+4. Init Script가 Docker·Nginx·certbot을 설치하고 `/etc/naverwebtoon-backend/backend.env`(DB 비밀번호·JWT 키는 무작위 생성)를 만든다.
+5. HTTPS가 열린 뒤 Actions 변수 `NCP_BACKEND_ORIGIN`을 설정하고 `main` 워크플로를 실행하면, 서버가 릴리스를 받아 `docker compose up`한다.
+
+서버 구성: Nginx(443) → `127.0.0.1:8080`(api 컨테이너)로 `/healthz`, `/v1/*`, `/_fake-storage/*`만 전달한다. DB는 컨테이너 볼륨 `pgdata`에 저장된다.
+서버에서 상태 확인: `journalctl -u naverwebtoon-backend-update.service`(배포), `journalctl -u naverwebtoon-backend-tls.service`(인증서),
+`naverwebtoon-backend-compose ps` / `logs`(컨테이너).
+
+키를 나중에 바꾸려면 서버의 `/etc/naverwebtoon-backend/backend.env`를 고친 뒤 `naverwebtoon-backend-compose up -d`를 실행한다
+(ACG가 SSH를 막고 있으므로 콘솔 접속이 필요하다). 또는 `ops/secrets.env`로 Init Script를 다시 만들어 서버를 새로 만든다.
+
+남은 일: 실제 API 키를 넣은 뒤 CLOVA OCR·Studio·Voice 호출 확인 (요청 형식은 문서 기준으로 구현하고 가짜 HTTP로 테스트했다).

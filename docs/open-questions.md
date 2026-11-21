@@ -7,7 +7,7 @@
 
 | # | 내용 | 현재 구현 | 확인 필요 |
 |---|---|---|---|
-| A1 | 원격 저장소는 Go `/healthz` 서버이고, CI/CD(`.github/workflows/backend.yml`, `ops/`)는 서명한 Go 바이너리를 systemd로 배포한다 | Python/FastAPI로 새로 작성했다. Go 코드·워크플로·`ops/`는 **수정하지 않았다**. 그래서 현재 CI는 여전히 Go 빌드를 기준으로 동작한다 | Docker 기반 배포로 바꾸려면 워크플로와 `ops/`(특히 `backend.service`의 `IPAddressAllow=localhost`, `MemoryMax=256M`는 외부 CLOVA·DB 호출을 막는다)를 새로 설계해야 한다. Go 코드 삭제 여부도 정해야 한다 |
+| A1 | 원격 저장소는 Go `/healthz` 서버와 Go 바이너리 배포였다 | **FastAPI로 확정**(팀 결정). Go 코드를 삭제하고 CI/CD를 Docker 기반으로 바꿨다: CI가 테스트·이미지 빌드·`docker compose up` 검증(로컬·운영 compose)을 하고, `main`은 서명된 이미지·compose 묶음을 릴리스로 발행하며, 서버가 서명 검증 후 `docker compose up`한다 | 서버 메모리(2GB 이상 권장). 마이그레이션은 롤백하지 않으므로 스키마 변경은 이전 버전과 호환되게 작성해야 한다 |
 | A2 | 프런트 프록시의 `/api` 접두어 | 서버 경로는 `/v1/...` 고정. 프런트 `api.js`가 `/api/v1/*`를 `/v1/*`로 넘긴다고 가정 | 프록시 규칙 확정 |
 
 ## B. 응답 형식 (프런트 mock과의 차이 포함)
@@ -73,7 +73,8 @@
 | F5 | 작업 중 수정 | 수정 즉시 `stale`로 바꾸고, 작업이 끝날 때 입력 해시가 다르면 결과를 버린다 |
 | F6 | `force: true` 재생성 | 같은 해시의 캐시 항목을 새 음원으로 교체한다. 같은 입력을 공유하는 다른 대사도 새 음원을 쓰게 된다. 게시 스냅샷은 object key를 따로 저장하므로 영향이 없다 |
 | F7 | 인물 목소리 변경 시 stale 대상 | 그 인물의 `ready`·`failed` 대사. 나레이션 인물이면 화자 미지정 `narration`·`description`도 포함한다 |
-| F8 | 화자가 없는 `dialogue`의 목소리 | 기본 인물 목소리(`dain`)로 합성한다 |
+| F8 | 화자가 없는 `dialogue`의 목소리 | 기본 인물 목소리(`vdain`)로 합성한다 |
+| F13 | 인물 `voice_id` 검증 | `GET /v1/voices`에 있는 id만 받는다(그 밖은 400). 프런트 mock의 `dain`, `jinho` 같은 id는 CLOVA Voice 화자 id(`vdain`, `jinho` 등)로 바꿔야 한다 |
 | F9 | 대사 순서(`PUT lines/order`) | 보낸 순서대로 `order`를 1부터 매긴다. 같은 `y_ratio`끼리인지는 검사하지 않는다 (정렬은 `(image_index, y_ratio, order)`) |
 | F10 | 같은 위치의 대사와 효과음 | 효과음 큐의 `order`를 0으로 두어 같은 `y_ratio`면 효과음이 먼저 온다 |
 | F11 | 공개 큐의 `speaker` | 화자가 지정된 대사만 인물 이름. 대본(transcript)에서는 명세 예시처럼 `dialogue`만 `speaker`를 채운다 |
@@ -83,15 +84,16 @@
 
 | # | 내용 | 현재 구현 |
 |---|---|---|
-| G1 | CLOVA Dubbing 실제 사양 | `ClovaDubbingClient`는 스켈레톤이다(호출 시 `AI_UPSTREAM_ERROR`). `AI_BACKEND=clova`로 운영하려면 사양 확인 후 구현해야 한다 |
-| G2 | CLOVA OCR / Studio | OCR General V2, Studio Chat Completions v3(HCX-005) 형식으로 구현했지만 **실제 키로 검증하지 않았다** |
+| G1 | CLOVA Dubbing 실제 사양 | CLOVA Dubbing은 콘텐츠 제작용 웹 서비스이며 실시간 API 호출을 지원하지 않는다(NCP 서비스 플랜 안내: API 연동은 CLOVA Voice). 그래서 음성은 **CLOVA Voice Premium TTS**로 만든다. `voice_id` = CLOVA Voice 화자 id(`nara`, `vdain` 등), `voice_params` = `speed`(-5~10), `pitch`·`volume`·`alpha`(-5~5), `emotion_strength`(0~2). 감정은 neutral 0 / sad 1 / happy 2 / angry·shout 3으로 바꾸며 지원 화자에만 보낸다(nara는 분노·강도 미지원). whisper는 음량 -3, shout는 음량 +3·강도 2. scared·surprised·confused는 중립. 200자 초과 문장은 나눠 합성해 WAV로 잇는다 |
+| G2 | CLOVA OCR / Studio / Voice | 문서 기준 요청 형식으로 구현했고 가짜 HTTP 전송으로 요청·응답·오류 처리를 테스트했다. **실제 키로는 아직 호출해 보지 않았다** |
 | G3 | 서명 URL 만료 | 원고 이미지·작가용 음원(스튜디오 §6.1 "1시간") 1시간, 독자 음원 6시간. 게시된 회차의 이미지도 1시간 서명 URL (CDN 미정) |
 | G4 | 쿼터 | 월(UTC) 단위, 작품 소유 작가에게 집계. OCR은 이미지 1장당 1, Dubbing은 캐시 미적중 글자 수. 파이프라인 중 Dubbing 쿼터가 바닥나면 해당 대사를 `audio_failed`로 남긴다 |
-| G5 | 개발용 가짜 저장소 | `STORAGE_BACKEND=fake`이고 운영이 아닐 때만 `/_fake-storage/*` 경로를 연다 (HMAC 서명 검사) |
+| G5 | 가짜 저장소 | `STORAGE_BACKEND=fake`이면 `/_fake-storage/*`(HMAC 서명 검사)를 연다. 키를 넣기 전에도 운영 서버에서 전체 흐름이 동작하도록 운영 환경에서도 열며, 이때 경고 로그를 남긴다. 키를 넣으면 `STORAGE_BACKEND=s3` |
 | G6 | 예약 게시 스케줄러 | 워커 안에서 30초 주기로 폴링 (`SCHEDULER_INTERVAL_SECONDS`). 실패하면 다음 주기에 다시 시도하고 로그를 남긴다 |
 | G7 | 워커 장애 | heartbeat가 120초 끊긴 작업은 다시 대기열에 넣고, 3회를 넘으면 `WORKER_LOST`로 실패 처리 |
-| G8 | Docker 실행은 이 환경에 Docker가 없어 **검증하지 못했다** | `Dockerfile`, `docker-compose.yml`은 작성만 했다. 역할 초기화 SQL·DML 전용 권한·마이그레이션은 로컬 PostgreSQL 16에서 확인했다 |
-
+| G8 | Docker 실행 검증 | 작성 PC에는 Docker가 없고 운영 서버는 SSH(22)가 막혀 있어 직접 실행하지 못했다. 대신 CI(GitHub Ubuntu 러너)에서 로컬용·운영용 compose로 `docker compose up` 후 헬스 체크와 스모크 테스트(`scripts/smoke.sh`)를 돌리도록 했다. **push 전이라 CI 실행 결과는 아직 없다** |
+| G9 | 효과음 음원 | CLOVA에 효과음 API가 없어 Object Storage `sfx/presets/{tag}.wav`를 우선 쓰고, 없으면 내장 생성기로 만든 기본 효과음(결정적)을 쓴다. 실제 효과음 음원으로 바꾸려면 프리셋 파일을 올린다 |
+| G10 | 서버 환경변수와 API 키 | Init Script가 DB 비밀번호·JWT 키·초대 코드를 무작위로 만든다. API 키·CORS origin·초대 코드는 `ops/secrets.env`(커밋 금지)로 Init Script에 넣는다. 서버를 만든 뒤 바꾸려면 콘솔 접속으로 `/etc/naverwebtoon-backend/backend.env`를 고친다 |
 ## H. OpenAPI와 api.md의 차이
 
 `docs/openapi.json`은 `scripts/export_openapi.py`로 생성한다(테스트가 최신 여부를 검사한다). api.md 대비 차이는 위 B·C 항목과 같고,

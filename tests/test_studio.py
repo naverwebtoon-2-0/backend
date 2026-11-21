@@ -124,20 +124,22 @@ def test_character_voice_change_marks_lines_stale(client, integrations):
     assert res.status_code == 200
     assert _line(_studio(client, h, e["id"]), text="여기가 어디지?")["audio"]["status"] == "ready"
     res = client.patch(
-        f"/v1/characters/{minjun['id']}", json={"voice_id": "minsu", "voice_params": {"speed": 1}}, headers=h
+        f"/v1/characters/{minjun['id']}",
+        json={"voice_id": "vdaeseong", "voice_params": {"speed": 1}},
+        headers=h,
     )
-    assert res.json()["voice_id"] == "minsu"
+    assert res.json()["voice_id"] == "vdaeseong"
     assert _line(_studio(client, h, e["id"]), text="여기가 어디지?")["audio"]["status"] == "stale"
     # 나레이션 인물 목소리 변경 → 화자 미지정 나레이션도 stale
     narr = next(c for c in chars if c["kind"] == "narration")
-    client.patch(f"/v1/characters/{narr['id']}", json={"voice_id": "mijin"}, headers=h)
+    client.patch(f"/v1/characters/{narr['id']}", json={"voice_id": "vgoeun"}, headers=h)
     assert _line(_studio(client, h, e["id"]), kind="narration")["audio"]["status"] == "stale"
 
 
 def test_character_crud_merge(client, integrations):
     h, s, e, _ = processed_episode(client, integrations, images=1)
     res = client.post(
-        f"/v1/series/{s['id']}/characters", json={"name": "민준2", "voice_id": "minsu"}, headers=h
+        f"/v1/series/{s['id']}/characters", json={"name": "민준2", "voice_id": "vdaeseong"}, headers=h
     )
     assert res.status_code == 201
     dup = res.json()
@@ -156,6 +158,13 @@ def test_character_crud_merge(client, integrations):
             "/v1/characters/merge", json={"from": dup["id"], "into": dup["id"]}, headers=h
         ).status_code
         == 400
+    )
+    bad_voice = client.post(
+        f"/v1/series/{s['id']}/characters", json={"name": "x", "voice_id": "nope"}, headers=h
+    )
+    assert bad_voice.status_code == 400
+    assert (
+        client.patch(f"/v1/characters/{dup['id']}", json={"voice_id": "dain"}, headers=h).status_code == 400
     )
     empty = client.post(f"/v1/series/{s['id']}/characters", json={"name": "엑스트라"}, headers=h).json()
     assert client.delete(f"/v1/characters/{empty['id']}", headers=h).status_code == 204

@@ -8,6 +8,7 @@ from app.db import get_db
 from app.deps import require_author
 from app.errors import ApiError, validation_error
 from app.idempotency import Idempotency
+from app.integrations import get_integrations
 from app.models import Character, DialogueLine, Episode, User
 from app.schemas.common import ERROR_RESPONSES, Page
 from app.schemas.series import CharacterCreate, CharacterMerge, CharacterOut, CharacterUpdate
@@ -16,6 +17,13 @@ from app.services.episodes import mark_changed, mark_lines_stale, recompute_stat
 from app.services.views import character_view
 
 router = APIRouter(tags=["characters"], responses=ERROR_RESPONSES)
+
+
+def _check_voice(voice_id: str | None) -> None:
+    if voice_id is not None and voice_id not in {v["id"] for v in get_integrations().dubbing.list_voices()}:
+        raise validation_error(
+            "선택할 수 없는 목소리입니다. GET /v1/voices 목록에서 고르세요.", field="voice_id"
+        )
 
 
 def _stale_lines_of(db: Session, character: Character) -> None:
@@ -70,6 +78,7 @@ def create_character(
     if (replayed := idem.replay()) is not None:
         return replayed
     series = series_for_author(db, series_id, user)
+    _check_voice(body.voice_id)
     character = Character(series_id=series.id, **body.model_dump())
     db.add(character)
     db.flush()
@@ -90,6 +99,8 @@ def update_character(
             raise validation_error("name에 null을 보낼 수 없습니다.", field="name")
         character.name = body.name
     voice_changed = False
+    if "voice_id" in fields:
+        _check_voice(body.voice_id)
     if "voice_id" in fields and body.voice_id != character.voice_id:
         character.voice_id = body.voice_id
         voice_changed = True
