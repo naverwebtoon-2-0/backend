@@ -1,0 +1,28 @@
+[project]
+name = "naverwebtoon-backend"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
+ignore = [
+  "B008",   # FastAPI Depends() in defaults
+  "RUF001", "RUF002", "RUF003",  # 한글 문자열
+  "S101",   # assert (tests)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "S107", "S311"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+  "ignore::DeprecationWarning:botocore.*",
+  "ignore:Using `httpx` with `starlette.testclient`",
+]

@@ -1,4 +1,14 @@
 .idea/
 .env*
+!.env.example
 *.local.md
 /dist/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.fake-storage/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
