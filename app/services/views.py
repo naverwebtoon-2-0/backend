@@ -131,6 +131,7 @@ def episode_view(episode: Episode, *, stats: bool = False, job: Job | None = Non
         "published_at": episode.published_at,
         "scheduled_at": episode.scheduled_at,
         "has_unpublished_changes": episode.has_unpublished_changes,
+        "playback_version": episode.live_playback_version,
         "created_at": episode.created_at,
         "updated_at": episode.updated_at,
     }

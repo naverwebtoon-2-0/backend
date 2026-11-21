@@ -56,6 +56,7 @@ class EpisodeOut(BaseModel):
     published_at: datetime | None
     scheduled_at: datetime | None
     has_unpublished_changes: bool
+    playback_version: int | None
     created_at: datetime
     updated_at: datetime
     stats: EpisodeStats | None = None
