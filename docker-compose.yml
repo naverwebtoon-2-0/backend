@@ -1,0 +1,69 @@
+# 로컬 실행: cp .env.example .env && docker compose up --build
+x-app: &app
+  image: naverwebtoon-backend:${REVISION:-local}
+  env_file: .env
+  restart: unless-stopped
+  volumes:
+    - storage:/data/storage
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD를 .env에 설정하세요}
+      POSTGRES_DB: naverwebtoon
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
+      NW_OWNER_PASSWORD: ${NW_OWNER_PASSWORD:?}
+      NW_APP_PASSWORD: ${NW_APP_PASSWORD:?}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d naverwebtoon"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    <<: *app
+    build:
+      context: .
+      args:
+        REVISION: ${REVISION:-local}
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://nw_owner:${NW_OWNER_PASSWORD}@db:5432/naverwebtoon
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *app
+    environment:
+      DATABASE_URL: postgresql+psycopg://nw_app:${NW_APP_PASSWORD}@db:5432/naverwebtoon
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "app.worker.runner"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://nw_app:${NW_APP_PASSWORD}@db:5432/naverwebtoon
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
+  storage:
