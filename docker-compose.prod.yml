@@ -1,0 +1,86 @@
+# 운영 서버용 (ops/update.sh가 사용). 이미지는 서명된 릴리스에서 docker load로 받는다.
+#   REVISION=<commit> docker compose -p naverwebtoon --env-file /etc/naverwebtoon-backend/backend.env \
+#     -f docker-compose.prod.yml run --rm migrate
+#   REVISION=<commit> docker compose ... up -d --wait
+x-app: &app
+  image: naverwebtoon-backend:${REVISION:?REVISION이 필요합니다}
+  env_file: /etc/naverwebtoon-backend/backend.env
+  restart: unless-stopped
+  volumes:
+    - storage:/data/storage
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: naverwebtoon
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
+      NW_OWNER_PASSWORD: ${NW_OWNER_PASSWORD:?}
+      NW_APP_PASSWORD: ${NW_APP_PASSWORD:?}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # 최초 초기화 때만 쓰인다. 서버에서는 릴리스와 무관한 고정 경로를 쓴다(DB 컨테이너 재생성 방지)
+      - ${DB_INIT_DIR:-./docker/db/init}:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d naverwebtoon"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # `up`에는 포함되지 않고 `run --rm migrate`로만 실행한다.
+  migrate:
+    <<: *app
+    profiles: ["tools"]
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://nw_owner:${NW_OWNER_PASSWORD}@db:5432/naverwebtoon
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *app
+    environment:
+      DATABASE_URL: postgresql+psycopg://nw_app:${NW_APP_PASSWORD}@db:5432/naverwebtoon
+      REVISION: ${REVISION}
+      # nginx(호스트)만 접근하므로 프록시 헤더를 신뢰한다 (포트는 127.0.0.1에만 열림)
+      FORWARDED_ALLOW_IPS: "*"
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "app.worker.runner"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://nw_app:${NW_APP_PASSWORD}@db:5432/naverwebtoon
+      REVISION: ${REVISION}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  storage:

@@ -1,4 +1,16 @@
 .idea/
 .env*
+!.env.example
 *.local.md
 /dist/
+# 서버 Init Script에 넣을 비밀값 (커밋 금지)
+ops/secrets.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.fake-storage/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/

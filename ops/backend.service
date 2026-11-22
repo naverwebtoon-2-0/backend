@@ -1,28 +1,20 @@
 [Unit]
-Description=naverwebtoon 2.0 backend
-After=network.target
-ConditionFileIsExecutable=/opt/naverwebtoon-backend/current/backend-linux-amd64
+Description=naverwebtoon 2.0 backend (docker compose)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+ConditionPathExists=/opt/naverwebtoon-backend/current/docker-compose.prod.yml
 
 [Service]
-ExecStart=/opt/naverwebtoon-backend/current/backend-linux-amd64
-DynamicUser=true
-NoNewPrivileges=true
-PrivateTmp=true
-PrivateDevices=true
-ProtectSystem=strict
-ProtectHome=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-RestrictSUIDSGID=true
-RestrictNamespaces=true
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-IPAddressDeny=any
-IPAddressAllow=localhost
-CapabilityBoundingSet=
-MemoryMax=256M
-Restart=on-failure
-TimeoutStopSec=10
+Type=oneshot
+RemainAfterExit=true
+Environment=DOCKER_CONFIG=/opt/naverwebtoon-backend/.docker
+Environment=DB_INIT_DIR=/opt/naverwebtoon-backend/db-init
+WorkingDirectory=/opt/naverwebtoon-backend/current
+ExecStart=/usr/local/sbin/naverwebtoon-backend-compose up -d --remove-orphans
+ExecStop=/usr/local/sbin/naverwebtoon-backend-compose stop
+TimeoutStartSec=300
+TimeoutStopSec=60
 
 [Install]
 WantedBy=multi-user.target
