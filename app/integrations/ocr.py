@@ -17,6 +17,7 @@ class OcrField:
     text: str
     bbox: dict[str, float]  # 상대 좌표 x, y, w, h (0~1)
     confidence: float
+    line_break: bool = False  # CLOVA lineBreak: 이 단어 뒤에서 줄이 바뀜
 
 
 class OcrClient(Protocol):
@@ -88,6 +89,11 @@ class ClovaOcrClient:
                 "h": round(min(1.0, (max(ys) - y0) / max(height, 1)), 4),
             }
             fields.append(
-                OcrField(field.get("inferText", ""), bbox, float(field.get("inferConfidence", 0.0)))
+                OcrField(
+                    field.get("inferText", ""),
+                    bbox,
+                    float(field.get("inferConfidence", 0.0)),
+                    bool(field.get("lineBreak", False)),
+                )
             )
         return fields
