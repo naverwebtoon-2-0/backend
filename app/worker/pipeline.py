@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.integrations import Integrations
 from app.integrations.dubbing import VOICES
 from app.integrations.http import UpstreamError
-from app.integrations.structure import PageInput
+from app.integrations.structure import PageInput, structure_from_ocr
 from app.models import Character, Cue, DialogueLine, Episode, EpisodeImage, Job, Series, SfxCue
 from app.models.episode import PIPELINE_STEPS
 from app.models.studio import EMOTIONS, LINE_KINDS, VOICE_KINDS
@@ -214,16 +214,26 @@ class JobRunner:
             characters = list(s.scalars(select(Character).where(Character.series_id == series.id)))
             options = dict(episode.process_options)
         self._begin_step(job_id, "structure", len(pages), "analyzing")
+        fallback_warning = None
         try:
             result = self.integrations.structure.structure(
                 pages, [c.name for c in characters if c.kind == "character"], options
             )
         except UpstreamError as exc:
-            raise StepFailed(exc.app_code, "CLOVA Studio 호출에 실패했습니다.", exc.details()) from exc
+            if exc.code != "INVALID_RESPONSE" or exc.status != 200:
+                raise StepFailed(exc.app_code, "CLOVA Studio 호출에 실패했습니다.", exc.details()) from exc
+            result = structure_from_ocr(pages)
+            fallback_warning = {
+                "code": exc.app_code,
+                "message": "CLOVA Studio 응답 형식이 올바르지 않아 OCR 원문으로 대사를 만들었습니다.",
+                "details": {**exc.details(), "step": "structure"},
+            }
 
         with self.session_factory() as s:
             _, episode, series = self._episode_ctx(s, job_id)
             episode = s.get(Episode, episode.id, with_for_update=True)
+            if fallback_warning:
+                self._record_warning(s, job_id, fallback_warning)
             # 다시 정리하면 이전 결과를 대체한다.
             s.execute(delete(Cue).where(Cue.episode_id == episode.id))
             s.execute(delete(SfxCue).where(SfxCue.episode_id == episode.id))

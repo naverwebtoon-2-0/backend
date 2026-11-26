@@ -49,6 +49,25 @@ class StructureResult:
     sfx: list[StructuredSfx] = field(default_factory=list)
 
 
+def structure_from_ocr(pages: list[PageInput]) -> StructureResult:
+    result = StructureResult()
+    for page in pages:
+        for ocr_field in page.fields:
+            if text := ocr_field["text"].strip():
+                result.lines.append(
+                    StructuredLine(
+                        page.image_id,
+                        text,
+                        ocr_field.get("bbox"),
+                        "dialogue",
+                        None,
+                        "neutral",
+                        ocr_field.get("confidence"),
+                    )
+                )
+    return result
+
+
 class StructureClient(Protocol):
     def structure(
         self, pages: list[PageInput], known_characters: list[str], options: dict
@@ -156,7 +175,19 @@ class ClovaStructureClient:
             )
         try:
             content = data["result"]["message"]["content"]
+            if isinstance(content, list):
+                content = "\n".join(
+                    part["text"]
+                    for part in content
+                    if isinstance(part, dict) and isinstance(part.get("text"), str)
+                )
+            if not isinstance(content, str):
+                raise ValueError("missing response text")
             parsed = json.loads(content[content.index("{") : content.rindex("}") + 1])
+            if not isinstance(parsed, dict) or not isinstance(parsed.get("lines"), list):
+                raise ValueError("missing lines")
+            if not isinstance(parsed.get("sfx", []), list):
+                raise ValueError("invalid sfx")
         except (KeyError, ValueError, TypeError) as exc:
             raise UpstreamError(
                 "clova_studio",
@@ -168,6 +199,8 @@ class ClovaStructureClient:
             ) from exc
         result = StructureResult()
         for item in parsed.get("lines", []):
+            if not isinstance(item, dict):
+                continue
             ref = item.get("image_id")
             page = pages_by_id.get(ref) if isinstance(ref, str) else None
             if page is not None and item.get("text"):
@@ -183,6 +216,8 @@ class ClovaStructureClient:
                     )
                 )
         for item in parsed.get("sfx", []):
+            if not isinstance(item, dict):
+                continue
             ref = item.get("image_id")
             page = pages_by_id.get(ref) if isinstance(ref, str) else None
             if page is not None and item.get("sfx_tag") in self.sfx_tags:
@@ -191,20 +226,6 @@ class ClovaStructureClient:
                 )
         # 모델 응답에서 빠진 페이지는 OCR 원문을 검수할 수 있도록 남긴다.
         structured_pages = {line.image_id for line in result.lines}
-        for page in pages:
-            if page.image_id in structured_pages:
-                continue
-            for ocr_field in page.fields:
-                if text := ocr_field["text"].strip():
-                    result.lines.append(
-                        StructuredLine(
-                            page.image_id,
-                            text,
-                            ocr_field.get("bbox"),
-                            "dialogue",
-                            None,
-                            "neutral",
-                            ocr_field.get("confidence"),
-                        )
-                    )
+        fallback = structure_from_ocr([page for page in pages if page.image_id not in structured_pages])
+        result.lines.extend(fallback.lines)
         return result

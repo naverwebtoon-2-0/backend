@@ -146,6 +146,33 @@ class FailingStructure:
         return self.inner.structure(*args, **kwargs)
 
 
+def test_invalid_studio_result_preserves_ocr_and_records_warning(client, integrations):
+    class InvalidResponseStructure:
+        def structure(self, *args, **kwargs):
+            raise UpstreamError(
+                "clova_studio",
+                "invalid JSON",
+                False,
+                status=200,
+                code="INVALID_RESPONSE",
+                request_id="studio-test",
+            )
+
+    h, _, episode, _ = _setup(client, 1)
+    integrations.structure = InvalidResponseStructure()
+    job_id = client.post(f"/v1/episodes/{episode['id']}/process", json={}, headers=h).json()["job"]["id"]
+    run_jobs(integrations)
+    job = client.get(f"/v1/jobs/{job_id}", headers=h).json()
+    assert job["status"] == "succeeded"
+    warning = job["warnings"][0]
+    assert warning["details"]["step"] == "structure"
+    assert warning["details"]["upstream"]["request_id"] == "studio-test"
+    lines = client.get(f"/v1/episodes/{episode['id']}/lines", headers=h).json()["items"]
+    assert any(
+        line["original_text"] == "여기가 어디지?" and line["audio"]["status"] == "ready" for line in lines
+    )
+
+
 def test_resume_from_last_successful_step(client, integrations):
     h, _, e, _ = _setup(client, 2)
     ocr = FlakyOcr(fail_times=0)
