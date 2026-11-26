@@ -154,6 +154,63 @@ def test_ocr_accepts_pages_without_text():
     assert client.recognize(b"image", "image/png", 80, 60, "ko") == []
 
 
+def test_ocr_long_page_tiles_keep_coordinates_and_ignore_duplicate_text():
+    source = BytesIO()
+    Image.new("RGB", (40, 10277), "white").save(source, format="PNG")
+    sizes = []
+
+    def row(text, y):
+        return {"inferText": text, "boundingPoly": {"vertices": [{"x": 1, "y": y}, {"x": 5, "y": y + 4}]}}
+
+    def handler(request):
+        image = json.loads(request.content)["images"][0]
+        with Image.open(BytesIO(base64.b64decode(image["data"]))) as tile:
+            sizes.append(tile.size)
+        fields = [row("겹친 글자", 7850)] if len(sizes) == 1 else [row("겹친 글자", 107), row("아래", 700)]
+        return httpx.Response(200, json={"images": [{"inferResult": "SUCCESS", "fields": fields}]})
+
+    fields = ClovaOcrClient(_settings(), http=_client(handler)).recognize(
+        source.getvalue(), "image/png", 40, 10277, "ko"
+    )
+    assert sizes == [(40, 7999), (40, 2534)]
+    assert [field.text for field in fields] == ["겹친 글자", "아래"]
+    assert fields[1].bbox["y"] == round(8443 / 10277, 4)
+
+
+def test_ocr_http_200_reports_engine_failure():
+    def handler(request):
+        message = '400 Bad Request: "{"errorCode":"ENGN-010","errorMsg":"Image resolution limit exceeded"}"'
+        return httpx.Response(
+            200, json={"requestId": "ocr-123", "images": [{"inferResult": "ERROR", "message": message}]}
+        )
+
+    with pytest.raises(UpstreamError) as caught:
+        ClovaOcrClient(_settings(), http=_client(handler)).recognize(b"image", "image/png", 80, 60, "ko")
+    detail = caught.value.details()["upstream"]
+    assert detail["status"] == 200 and detail["code"] == "ENGN-010"
+    assert detail["message"] == "Image resolution limit exceeded" and detail["request_id"] == "ocr-123"
+
+
+def test_provider_http_error_returns_code_and_masks_private_url():
+    def handler(request):
+        return httpx.Response(
+            401,
+            headers={"X-NCP-APIGW-Request-Id": "gw-123"},
+            json={
+                "error": {
+                    "errorCode": "200",
+                    "message": "Authentication failed at https://private.example/path",
+                }
+            },
+        )
+
+    with pytest.raises(UpstreamError) as caught:
+        ClovaVoiceClient(_settings(), http=_client(handler)).synthesize("안녕", "nara", {}, "neutral")
+    detail = caught.value.details()["upstream"]
+    assert detail["status"] == 401 and detail["code"] == "200" and not detail["retryable"]
+    assert detail["request_id"] == "gw-123" and detail["message"] == "Authentication failed at [가림]"
+
+
 # ── Studio ──────────────────────────────────────────
 
 

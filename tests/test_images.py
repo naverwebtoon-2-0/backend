@@ -1,3 +1,4 @@
+from app.integrations.http import UpstreamError
 from tests.conftest import create_episode, create_series, make_png, signup, upload_images
 
 
@@ -18,6 +19,29 @@ def test_presign_complete_flow(client):
     assert [i["index"] for i in items] == [0, 1, 2]
     assert items[0]["width"] == 800 and items[0]["height"] == 1200
     assert items[0]["reviewed"] is False and items[0]["reviewed_at"] is None
+
+
+def test_upload_completion_reports_storage_failure(client, integrations, monkeypatch):
+    h, _, episode = _setup(client)
+    uri = f"/v1/episodes/{episode['id']}/images"
+    upload = client.post(
+        f"{uri}/presign",
+        json={"files": [{"filename": "a.png", "content_type": "image/png", "size": 10}]},
+        headers=h,
+    ).json()["uploads"][0]
+
+    def denied(key):
+        raise UpstreamError(
+            "object_storage", "Access Denied", False, status=403, code="AccessDenied", operation="head_object"
+        )
+
+    monkeypatch.setattr(integrations.storage, "head", denied)
+    res = client.post(f"{uri}/complete", json={"image_ids": [upload["image_id"]]}, headers=h)
+    error = res.json()["error"]
+    assert res.status_code == 502 and error["code"] == "STORAGE_UPSTREAM_ERROR"
+    assert error["details"]["request_id"] == res.headers["X-Request-ID"]
+    assert error["details"]["upstream"]["status"] == 403
+    assert error["details"]["upstream"]["code"] == "AccessDenied"
 
 
 def test_presign_rejects_type_and_size(client):

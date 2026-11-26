@@ -110,7 +110,9 @@ class FlakyOcr(FakeOcrClient):
     def recognize(self, *args, **kwargs):
         self.calls += 1
         if self.calls <= self.fail_times:
-            raise UpstreamError("clova_ocr", "HTTP 500")
+            raise UpstreamError(
+                "clova_ocr", "OCR server error", status=500, code="5000", request_id="ocr-test"
+            )
         return super().recognize(*args, **kwargs)
 
 
@@ -122,6 +124,8 @@ def test_ocr_failure_then_resume(client, integrations):
     job = client.get(f"/v1/jobs/{job_id}", headers=h).json()
     assert job["status"] == "failed"
     assert job["error"]["code"] == "AI_UPSTREAM_ERROR" and job["error"]["details"]["step"] == "ocr"
+    assert job["error"]["details"]["upstream"]["status"] == 500
+    assert job["error"]["details"]["upstream"]["request_id"] == "ocr-test"
     assert client.get(f"/v1/episodes/{e['id']}", headers=h).json()["state"] == "failed"
 
     res = client.post(f"/v1/episodes/{e['id']}/process", json={}, headers=h)
@@ -174,11 +178,17 @@ class FailOneLineOcr(FakeOcrClient):
 def test_partial_audio_failure_goes_to_needs_review(client, integrations):
     h, _, e, _ = _setup(client, 1)
     integrations.ocr = FailOneLineOcr()
-    client.post(f"/v1/episodes/{e['id']}/process", json={}, headers=h)
+    job_id = client.post(f"/v1/episodes/{e['id']}/process", json={}, headers=h).json()["job"]["id"]
     run_jobs(integrations)
     episode = client.get(f"/v1/episodes/{e['id']}?include=stats", headers=h).json()
     assert episode["state"] == "needs_review"
     assert episode["stats"]["issue_breakdown"]["audio_failed"] == 1
+    job = client.get(f"/v1/jobs/{job_id}", headers=h).json()
+    warning = job["warnings"][0]
+    assert job["status"] == "succeeded" and warning["details"]["service"] == "clova_voice"
+    lines = client.get(f"/v1/episodes/{e['id']}/lines", headers=h).json()["items"]
+    failed_line = next(line for line in lines if line["id"] == warning["details"]["line_id"])
+    assert failed_line["audio"]["status"] == "failed" and failed_line["audio"]["error"] == warning
     with get_sessionmaker()() as db:
         failed = db.scalars(select(DialogueLine).where(DialogueLine.audio_status == "failed")).all()
         assert [line.text for line in failed] == ["이건 실패 [[fail]]?"]

@@ -17,7 +17,13 @@ import httpx
 
 from app.config import Settings
 from app.integrations import sfx_synth
-from app.integrations.http import UpstreamError, with_retries
+from app.integrations.http import (
+    UpstreamError,
+    json_response,
+    provider_error,
+    response_request_id,
+    with_retries,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +242,17 @@ class ClovaVoiceClient:
                 timeout=self.timeout,
             )
             res.raise_for_status()
+            if res.content[:4] != b"RIFF" or res.content[8:12] != b"WAVE":
+                payload = json_response("clova_voice", res)
+                code, message = provider_error(payload)
+                raise UpstreamError(
+                    "clova_voice",
+                    message or "음성 합성 응답이 WAV가 아닙니다.",
+                    False,
+                    status=res.status_code,
+                    code=code or "INVALID_AUDIO",
+                    request_id=response_request_id(res),
+                )
             return res.content
 
         return with_retries("clova_voice", call, self.max_retries)
@@ -250,7 +267,12 @@ class ClovaVoiceClient:
             raise UpstreamError("clova_voice", "empty text", retryable=False)
         base = voice_form(voice_id, params, emotion)
         parts = [self._tts({**base, "text": chunk}) for chunk in chunks]
-        data, duration = concat_wavs(parts)
+        try:
+            data, duration = concat_wavs(parts)
+        except (wave.Error, EOFError) as exc:
+            raise UpstreamError(
+                "clova_voice", "음성 합성 WAV를 읽을 수 없습니다.", False, code="INVALID_AUDIO"
+            ) from exc
         return AudioResult(data, "audio/wav", duration)
 
     def synthesize_sfx(self, tag: str) -> AudioResult:

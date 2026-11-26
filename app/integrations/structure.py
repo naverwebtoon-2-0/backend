@@ -8,7 +8,13 @@ from typing import Protocol
 import httpx
 
 from app.config import Settings
-from app.integrations.http import UpstreamError, with_retries
+from app.integrations.http import (
+    UpstreamError,
+    json_response,
+    provider_error,
+    response_request_id,
+    with_retries,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +131,7 @@ class ClovaStructureClient:
             "maxTokens": 4096,
         }
 
-        def call() -> dict:
+        def call() -> httpx.Response:
             res = self.http.post(
                 self.url,
                 json=body,
@@ -133,17 +139,33 @@ class ClovaStructureClient:
                 timeout=self.timeout,
             )
             res.raise_for_status()
-            return res.json()
+            return res
 
-        data = with_retries("clova_studio", call, self.max_retries)
-        status = (data.get("status") or {}).get("code")
-        if status not in (None, "20000"):
-            raise UpstreamError("clova_studio", f"status {status}", retryable=False)
+        response = with_retries("clova_studio", call, self.max_retries)
+        data = json_response("clova_studio", response)
+        code, message = provider_error(data)
+        request_id = response_request_id(response)
+        if code not in (None, "20000"):
+            raise UpstreamError(
+                "clova_studio",
+                message or f"CLOVA Studio 상태 {code}",
+                False,
+                status=response.status_code,
+                code=code,
+                request_id=request_id,
+            )
         try:
             content = data["result"]["message"]["content"]
             parsed = json.loads(content[content.index("{") : content.rindex("}") + 1])
         except (KeyError, ValueError, TypeError) as exc:
-            raise UpstreamError("clova_studio", "invalid response", retryable=False) from exc
+            raise UpstreamError(
+                "clova_studio",
+                "모델 결과에 유효한 대사 JSON이 없습니다.",
+                False,
+                status=response.status_code,
+                code="INVALID_RESPONSE",
+                request_id=request_id,
+            ) from exc
         result = StructureResult()
         for item in parsed.get("lines", []):
             ref = item.get("image_id")

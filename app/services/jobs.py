@@ -34,7 +34,7 @@ def finish_canceled(db: Session, job: Job, episode: Episode) -> None:
     """취소 마무리. 이미 만든 결과는 유지하고, 생성 중이던 대사는 재생성 필요(stale)로 되돌린다."""
     job.status = "canceled"
     job.finished_at = utcnow()
-    job.error = {"code": "CANCELED", "message": "작업이 취소되었습니다.", "details": None}
+    job.error = {"code": "CANCELED", "message": "작업이 취소되었습니다.", "details": {"step": job.step}}
     release_generating(db, job)
     if job.kind == "process":
         # 이어서 실행할 수 있게 failed(진행분 있음) 또는 uploaded(진행분 없음)로 둔다.

@@ -95,6 +95,8 @@ class JobRunner:
             logger.info("job canceled", extra={"job_id": job_id})
         except StepFailed as exc:
             self._fail(job_id, exc.code, exc.message, exc.details)
+        except UpstreamError as exc:
+            self._fail(job_id, exc.app_code, exc.message, exc.details())
         except Exception as exc:
             logger.exception("job crashed", extra={"job_id": job_id})
             self._fail(job_id, "INTERNAL_ERROR", "작업 중 오류가 발생했습니다.", {"type": type(exc).__name__})
@@ -105,14 +107,23 @@ class JobRunner:
             episode = s.get(Episode, job.episode_id, with_for_update=True)
             job.status = "failed"
             job.finished_at = utcnow()
-            job.error = {"code": code, "message": message, "details": {**(details or {}), "step": job.step}}
+            job.error = {
+                "code": code,
+                "message": message,
+                "details": {"reason": message, **(details or {}), "step": job.step},
+            }
             release_generating(s, job)
             if job.kind == "process":
                 episode.state = "failed"
             episode.updated_at = utcnow()
             recompute_stats(s, episode)
             s.commit()
-        logger.warning("job failed", extra={"job_id": job_id, "code": code})
+        logger.warning("job failed", extra={"job_id": job_id, "code": code, "details": details})
+
+    def _record_warning(self, s: Session, job_id: str, warning: dict) -> None:
+        job = s.get(Job, job_id, with_for_update=True)
+        job.warnings = [*(job.warnings or []), warning]
+        logger.warning("job item failed", extra={"job_id": job_id, "warning": warning})
 
     # ── process ────────────────────────────────────────
 
@@ -175,7 +186,9 @@ class JobRunner:
                     )
                 except UpstreamError as exc:
                     raise StepFailed(
-                        "AI_UPSTREAM_ERROR", "CLOVA OCR 호출에 실패했습니다.", {"service": exc.service}
+                        exc.app_code,
+                        "이미지 OCR 처리에 실패했습니다.",
+                        {**exc.details(), "image_id": image_id, "width": width, "height": height},
                     ) from exc
                 with self.session_factory() as s:
                     s.execute(
@@ -206,9 +219,7 @@ class JobRunner:
                 pages, [c.name for c in characters if c.kind == "character"], options
             )
         except UpstreamError as exc:
-            raise StepFailed(
-                "AI_UPSTREAM_ERROR", "CLOVA Studio 호출에 실패했습니다.", {"service": exc.service}
-            ) from exc
+            raise StepFailed(exc.app_code, "CLOVA Studio 호출에 실패했습니다.", exc.details()) from exc
 
         with self.session_factory() as s:
             _, episode, series = self._episode_ctx(s, job_id)
@@ -305,8 +316,17 @@ class JobRunner:
                     try:
                         asset = sfx_asset(s, self.integrations, cue.sfx_tag)
                         cue.asset_id, cue.duration_ms = asset.id, asset.duration_ms
-                    except UpstreamError:
-                        logger.warning("sfx synthesis failed", extra={"cue_id": cue_id})
+                    except UpstreamError as exc:
+                        s.rollback()
+                        self._record_warning(
+                            s,
+                            job_id,
+                            {
+                                "code": exc.app_code,
+                                "message": exc.message,
+                                "details": {**exc.details(), "step": "dubbing", "cue_id": cue_id},
+                            },
+                        )
                 done += 1
                 self._touch(s, job_id, progress_done=done)
 
@@ -342,7 +362,16 @@ class JobRunner:
                     s.commit()
                 except (UpstreamError, StepFailed) as exc:
                     s.rollback()
-                    error = exc
+                    code, details = (
+                        (exc.app_code, exc.details())
+                        if isinstance(exc, UpstreamError)
+                        else (exc.code, exc.details or {})
+                    )
+                    error = {
+                        "code": code,
+                        "message": exc.message,
+                        "details": {**details, "step": "dubbing", "line_id": line_id},
+                    }
             with self.session_factory() as s:
                 line = s.get(DialogueLine, line_id, with_for_update=True)
                 if line is not None and line.audio_status == "generating":
@@ -353,10 +382,14 @@ class JobRunner:
                     if current.hash != vin.hash:
                         # 작업 중 수정됨 → 결과를 버리고 재생성 필요로 남긴다 (§7)
                         line.audio_status = "stale"
+                        line.audio_error = None
                     elif error is not None:
                         line.audio_status = "failed"
+                        line.audio_error = error
+                        self._record_warning(s, job_id, error)
                     else:
                         line.audio_status = "ready"
+                        line.audio_error = None
                         line.audio_asset_id = asset_id
                         line.audio_input_hash = vin.hash
                 episode = s.get(Episode, episode_id)

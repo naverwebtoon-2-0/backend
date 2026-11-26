@@ -39,6 +39,7 @@ class DialogueLine(IdMixin, TimestampMixin, Base):
     emotion: Mapped[str] = mapped_column(String(16), nullable=False, default="neutral")
     ocr_confidence: Mapped[float | None] = mapped_column(Float)
     audio_status: Mapped[str | None] = mapped_column(String(16))
+    audio_error: Mapped[dict | None] = mapped_column(JSONB)
     audio_asset_id: Mapped[str | None] = mapped_column(ForeignKey("audio_assets.id", ondelete="SET NULL"))
     # 현재 연결된 음원을 만든 입력의 해시 (작업 중 수정 감지용)
     audio_input_hash: Mapped[str | None] = mapped_column(String(64))
