@@ -87,6 +87,8 @@ class FakeStructureClient:
 _SYSTEM_PROMPT = """너는 웹툰 원고의 OCR 결과를 정리하는 도우미다.
 입력은 이미지별 텍스트 조각(text, bbox, confidence) 목록이다. 말풍선 단위로 묶고 각 항목을 분류해
 아래 JSON만 출력한다.
+각 항목의 image_id는 해당 입력 페이지의 image_id를 그대로 복사한다.
+말풍선이 아닌 텍스트도 누락하지 말고 필요하면 ignore로 분류한다.
 {"lines":[{"image_id":"...","text":"...","bbox":{"x":0,"y":0,"w":0,"h":0},"kind":"dialogue|narration|description|sfx_text|ignore",
 "speaker":"인물 이름 또는 null","emotion":"neutral|happy|sad|angry|scared|surprised|confused|whisper|shout",
 "ocr_confidence":0.0}],"sfx":[{"image_id":"...","y_ratio":0.0,"sfx_tag":"프리셋 태그"}]}"""
@@ -106,11 +108,13 @@ class ClovaStructureClient:
     ) -> StructureResult:
         if not self.api_key:
             raise UpstreamError("clova_studio", "not configured", retryable=False)
+        # 모델이 긴 이미지 ID를 바꾸지 않도록 짧은 번호로 전달한다.
+        pages_by_id = {f"p{index}": page for index, page in enumerate(pages, start=1)}
         user = {
             "known_characters": known_characters,
             "sfx_tags": self.sfx_tags,
             "options": options,
-            "pages": [{"image_id": p.image_id, "fields": p.fields} for p in pages],
+            "pages": [{"image_id": ref, "fields": page.fields} for ref, page in pages_by_id.items()],
         }
         body = {
             "messages": [
@@ -140,13 +144,14 @@ class ClovaStructureClient:
             parsed = json.loads(content[content.index("{") : content.rindex("}") + 1])
         except (KeyError, ValueError, TypeError) as exc:
             raise UpstreamError("clova_studio", "invalid response", retryable=False) from exc
-        valid_ids = {p.image_id for p in pages}
         result = StructureResult()
         for item in parsed.get("lines", []):
-            if item.get("image_id") in valid_ids and item.get("text"):
+            ref = item.get("image_id")
+            page = pages_by_id.get(ref) if isinstance(ref, str) else None
+            if page is not None and item.get("text"):
                 result.lines.append(
                     StructuredLine(
-                        item["image_id"],
+                        page.image_id,
                         item["text"],
                         item.get("bbox"),
                         item.get("kind", "dialogue"),
@@ -156,8 +161,28 @@ class ClovaStructureClient:
                     )
                 )
         for item in parsed.get("sfx", []):
-            if item.get("image_id") in valid_ids and item.get("sfx_tag") in self.sfx_tags:
+            ref = item.get("image_id")
+            page = pages_by_id.get(ref) if isinstance(ref, str) else None
+            if page is not None and item.get("sfx_tag") in self.sfx_tags:
                 result.sfx.append(
-                    StructuredSfx(item["image_id"], float(item.get("y_ratio", 0.0)), item["sfx_tag"])
+                    StructuredSfx(page.image_id, float(item.get("y_ratio", 0.0)), item["sfx_tag"])
                 )
+        # 모델 응답에서 빠진 페이지는 OCR 원문을 검수할 수 있도록 남긴다.
+        structured_pages = {line.image_id for line in result.lines}
+        for page in pages:
+            if page.image_id in structured_pages:
+                continue
+            for ocr_field in page.fields:
+                if text := ocr_field["text"].strip():
+                    result.lines.append(
+                        StructuredLine(
+                            page.image_id,
+                            text,
+                            ocr_field.get("bbox"),
+                            "dialogue",
+                            None,
+                            "neutral",
+                            ocr_field.get("confidence"),
+                        )
+                    )
         return result

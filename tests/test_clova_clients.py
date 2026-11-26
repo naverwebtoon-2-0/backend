@@ -158,10 +158,12 @@ def test_ocr_accepts_pages_without_text():
 
 
 def test_structure_parses_json_from_completion():
+    first_id = "01a216f5-9c6d-71c3-b886-75be7b01cbd8"
+    second_id = "01a216f5-9f6e-70d3-ada2-e8865a4966de"
     content = {
         "lines": [
             {
-                "image_id": "img1",
+                "image_id": "p1",
                 "text": "여기가 어디지?",
                 "bbox": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.04},
                 "kind": "dialogue",
@@ -172,8 +174,8 @@ def test_structure_parses_json_from_completion():
             {"image_id": "other", "text": "무시"},
         ],
         "sfx": [
-            {"image_id": "img1", "y_ratio": 0.5, "sfx_tag": "door_open"},
-            {"image_id": "img1", "y_ratio": 0.5, "sfx_tag": "unknown"},
+            {"image_id": "p2", "y_ratio": 0.5, "sfx_tag": "door_open"},
+            {"image_id": "p2", "y_ratio": 0.5, "sfx_tag": "unknown"},
         ],
     }
 
@@ -181,6 +183,8 @@ def test_structure_parses_json_from_completion():
         assert request.headers["Authorization"] == "Bearer studio-key"
         body = json.loads(request.content)
         assert body["messages"][0]["role"] == "system"
+        pages = json.loads(body["messages"][1]["content"])["pages"]
+        assert [page["image_id"] for page in pages] == ["p1", "p2"]
         return httpx.Response(
             200,
             json={
@@ -190,11 +194,11 @@ def test_structure_parses_json_from_completion():
         )
 
     client = ClovaStructureClient(_settings(), ["door_open"], http=_client(handler))
-    result = client.structure([PageInput("img1", [])], ["민준"], {"sfx": True})
-    assert [(line.text, line.speaker, line.kind) for line in result.lines] == [
-        ("여기가 어디지?", "민준", "dialogue")
+    result = client.structure([PageInput(first_id, []), PageInput(second_id, [])], ["민준"], {"sfx": True})
+    assert [(line.image_id, line.text, line.speaker, line.kind) for line in result.lines] == [
+        (first_id, "여기가 어디지?", "민준", "dialogue")
     ]
-    assert [(s.sfx_tag, s.y_ratio) for s in result.sfx] == [("door_open", 0.5)]
+    assert [(s.image_id, s.sfx_tag, s.y_ratio) for s in result.sfx] == [(second_id, "door_open", 0.5)]
 
 
 def test_structure_invalid_response():
@@ -211,6 +215,20 @@ def test_structure_invalid_response():
 
     with pytest.raises(UpstreamError):
         ClovaStructureClient(_settings(), [], http=_client(failed)).structure([PageInput("a", [])], [], {})
+
+
+def test_structure_preserves_ocr_for_missing_page():
+    def handler(request):
+        content = json.dumps({"lines": [{"image_id": "invalid", "text": "다른 페이지"}]})
+        return httpx.Response(200, json={"result": {"message": {"content": content}}})
+
+    fields = [{"text": "OCR 원문", "bbox": {"y": 0.4}, "confidence": 0.9}]
+    result = ClovaStructureClient(_settings(), [], http=_client(handler)).structure(
+        [PageInput("stored-id", fields), PageInput("blank", [])], [], {}
+    )
+    assert [(line.image_id, line.text, line.ocr_confidence) for line in result.lines] == [
+        ("stored-id", "OCR 원문", 0.9)
+    ]
 
 
 # ── Voice ───────────────────────────────────────────
