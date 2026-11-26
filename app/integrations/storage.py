@@ -46,6 +46,9 @@ class S3StorageClient:
             aws_secret_access_key=settings.storage_secret_key,
             config=Config(
                 signature_version="s3v4",
+                # 네이버 Object Storage는 SDK의 기본 체크섬 형식을 지원하지 않는다.
+                request_checksum_calculation="when_required",
+                response_checksum_validation="when_required",
                 connect_timeout=5,
                 read_timeout=30,
                 retries={"max_attempts": 3, "mode": "standard"},
