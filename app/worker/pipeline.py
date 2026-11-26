@@ -23,6 +23,7 @@ from app.services import quota
 from app.services.audio import find_asset, sfx_asset, synthesize_voice, voice_input
 from app.services.episodes import mark_changed, narration_character, recompute_stats, utcnow
 from app.services.jobs import finish_canceled, release_generating
+from app.services.ocr_grouping import group_fields
 from app.services.playback import rebuild_cues
 
 logger = logging.getLogger(__name__)
@@ -183,7 +184,13 @@ class JobRunner:
                         .where(EpisodeImage.id == image_id)
                         .values(
                             ocr_result=[
-                                {"text": f.text, "bbox": f.bbox, "confidence": f.confidence} for f in fields
+                                {
+                                    "text": f.text,
+                                    "bbox": f.bbox,
+                                    "confidence": f.confidence,
+                                    "line_break": f.line_break,
+                                }
+                                for f in fields
                             ]
                         )
                     )
@@ -197,7 +204,10 @@ class JobRunner:
         with self.session_factory() as s:
             _, episode, series = self._episode_ctx(s, job_id)
             images = self._images(s, episode.id)
-            pages = [PageInput(img.id, img.ocr_result or []) for img in images]
+            # OCR 단어 조각을 좌표로 먼저 말풍선 단위로 묶는다 (원문 유지, 외부 호출 없음).
+            pages = [
+                PageInput(img.id, group_fields(img.ocr_result or [], img.width, img.height)) for img in images
+            ]
             characters = list(s.scalars(select(Character).where(Character.series_id == series.id)))
             options = dict(episode.process_options)
         self._begin_step(job_id, "structure", len(pages), "analyzing")

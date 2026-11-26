@@ -62,6 +62,7 @@ def test_ocr_request_and_bbox_normalization():
                             {
                                 "inferText": "안녕",
                                 "inferConfidence": 0.97,
+                                "lineBreak": True,
                                 "boundingPoly": {
                                     "vertices": [
                                         {"x": 80, "y": 240},
@@ -84,6 +85,7 @@ def test_ocr_request_and_bbox_normalization():
     assert seen["body"]["images"][0]["format"] == "png"
     assert fields[0].text == "안녕" and fields[0].confidence == 0.97
     assert fields[0].bbox == {"x": 0.1, "y": 0.2, "w": 0.4, "h": 0.05}
+    assert fields[0].line_break is True
 
 
 def test_ocr_retries_5xx_then_fails_and_4xx_not_retried():
@@ -118,44 +120,91 @@ def test_ocr_not_configured():
 # ── Studio ──────────────────────────────────────────
 
 
-def test_structure_parses_json_from_completion():
+def _completion(content: dict) -> httpx.Response:
+    return httpx.Response(
+        200,
+        json={
+            "status": {"code": "20000"},
+            "result": {"message": {"role": "assistant", "content": "결과:\n" + json.dumps(content)}},
+        },
+    )
+
+
+def _balloon(text, y, conf=0.9):
+    return {"text": text, "bbox": {"x": 0.1, "y": y, "w": 0.3, "h": 0.04}, "confidence": conf}
+
+
+def test_structure_answers_by_id_and_keeps_original_text():
+    pages = [
+        PageInput("img1", [_balloon("여기가", 0.2), _balloon("어디지?", 0.25, 0.7), _balloon("삐걱", 0.5)]),
+        PageInput("img2", [_balloon("워터마크", 0.9)]),
+    ]
     content = {
         "lines": [
+            # 잘못 나뉜 말풍선 합치기. 모델이 text를 고쳐 써도 무시하고 원문을 쓴다.
             {
-                "image_id": "img1",
-                "text": "여기가 어디지?",
-                "bbox": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.04},
+                "ids": ["b2", "b1"],
+                "text": "고친 문장",
                 "kind": "dialogue",
                 "speaker": "민준",
                 "emotion": "confused",
-                "ocr_confidence": 0.9,
             },
-            {"image_id": "other", "text": "무시"},
+            {"ids": ["b3"], "kind": "sfx_text", "speaker": None, "emotion": "neutral"},
+            {"ids": ["b1", "없는id"], "kind": "dialogue"},  # 이미 쓴 id·없는 id는 무시
         ],
-        "sfx": [
-            {"image_id": "img1", "y_ratio": 0.5, "sfx_tag": "door_open"},
-            {"image_id": "img1", "y_ratio": 0.5, "sfx_tag": "unknown"},
-        ],
+        "sfx": [{"id": "b3", "sfx_tag": "door_open"}, {"id": "b3", "sfx_tag": "unknown"}],
     }
 
     def handler(request):
         assert request.headers["Authorization"] == "Bearer studio-key"
         body = json.loads(request.content)
         assert body["messages"][0]["role"] == "system"
-        return httpx.Response(
-            200,
-            json={
-                "status": {"code": "20000"},
-                "result": {"message": {"role": "assistant", "content": "결과:\n" + json.dumps(content)}},
-            },
-        )
+        user = json.loads(body["messages"][1]["content"])
+        assert [b["id"] for p in user["pages"] for b in p["balloons"]] == ["b1", "b2", "b3", "b4"]
+        return _completion(content)
 
     client = ClovaStructureClient(_settings(), ["door_open"], http=_client(handler))
-    result = client.structure([PageInput("img1", [])], ["민준"], {"sfx": True})
-    assert [(line.text, line.speaker, line.kind) for line in result.lines] == [
-        ("여기가 어디지?", "민준", "dialogue")
+    result = client.structure(pages, ["민준"], {"sfx": True})
+    assert [(ln.image_id, ln.text, ln.speaker, ln.kind) for ln in result.lines] == [
+        ("img1", "여기가 어디지?", "민준", "dialogue"),
+        ("img1", "삐걱", None, "sfx_text"),
+        # 모델이 빠뜨린 말풍선은 화자 미지정 대사로 남는다
+        ("img2", "워터마크", None, "dialogue"),
     ]
-    assert [(s.sfx_tag, s.y_ratio) for s in result.sfx] == [("door_open", 0.5)]
+    merged = result.lines[0]
+    assert merged.ocr_confidence == 0.7
+    assert merged.bbox == {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.09}
+    assert [(s.image_id, s.sfx_tag, s.y_ratio) for s in result.sfx] == [("img1", "door_open", 0.5)]
+
+
+def test_structure_chunks_requests_and_passes_context():
+    pages = [PageInput(f"img{i}", [_balloon(f"대사{i}", 0.1)]) for i in range(5)]
+    requests = []
+
+    def handler(request):
+        user = json.loads(json.loads(request.content)["messages"][1]["content"])
+        requests.append(user)
+        ids = [b["id"] for p in user["pages"] for b in p["balloons"]]
+        return _completion({"lines": [{"ids": [i], "kind": "dialogue", "speaker": "서연"} for i in ids]})
+
+    client = ClovaStructureClient(_settings(), [], http=_client(handler))
+    client.chunk_balloons = 2
+    result = client.structure(pages, [], {})
+    assert len(requests) == 3
+    assert requests[0]["known_characters"] == [] and requests[0]["previous_lines"] == []
+    assert requests[1]["known_characters"] == ["서연"]
+    assert requests[1]["previous_lines"][-1] == {"speaker": "서연", "text": "대사1"}
+    assert [ln.text for ln in result.lines] == [f"대사{i}" for i in range(5)]
+
+
+def test_structure_skips_call_when_no_balloons():
+    def handler(request):
+        raise AssertionError("호출하면 안 된다")
+
+    result = ClovaStructureClient(_settings(), [], http=_client(handler)).structure(
+        [PageInput("a", [])], [], {}
+    )
+    assert result.lines == [] and result.sfx == []
 
 
 def test_structure_invalid_response():
@@ -164,14 +213,15 @@ def test_structure_invalid_response():
             200, json={"status": {"code": "20000"}, "result": {"message": {"content": "no json"}}}
         )
 
+    pages = [PageInput("a", [_balloon("안녕", 0.1)])]
     with pytest.raises(UpstreamError):
-        ClovaStructureClient(_settings(), [], http=_client(handler)).structure([PageInput("a", [])], [], {})
+        ClovaStructureClient(_settings(), [], http=_client(handler)).structure(pages, [], {})
 
     def failed(request):
         return httpx.Response(200, json={"status": {"code": "40001"}, "result": None})
 
     with pytest.raises(UpstreamError):
-        ClovaStructureClient(_settings(), [], http=_client(failed)).structure([PageInput("a", [])], [], {})
+        ClovaStructureClient(_settings(), [], http=_client(failed)).structure(pages, [], {})
 
 
 # ── Voice ───────────────────────────────────────────
