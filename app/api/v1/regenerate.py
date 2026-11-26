@@ -11,7 +11,7 @@ from app.idempotency import Idempotency
 from app.models import Character, DialogueLine, Episode, Series, User
 from app.models.studio import VOICE_KINDS
 from app.schemas.common import ERROR_RESPONSES
-from app.schemas.studio import LineRegenerateRequest, RegenerateRequest
+from app.schemas.studio import LineAudioResponse, LineRegenerateRequest, RegenerateRequest, RegenerateResponse
 from app.services import quota
 from app.services.access import episode_for_author, line_for_author
 from app.services.audio import find_asset, voice_input
@@ -60,7 +60,7 @@ def _start_job(db: Session, episode: Episode, user: User, lines: list[DialogueLi
     return {"job": {"id": job.id, "kind": job.kind, "status": job.status, "step": job.step}}
 
 
-@router.post("/v1/episodes/{episode_id}/regenerate", status_code=202)
+@router.post("/v1/episodes/{episode_id}/regenerate", status_code=202, response_model=RegenerateResponse)
 def regenerate_episode(
     episode_id: str,
     body: RegenerateRequest,
@@ -98,7 +98,12 @@ def regenerate_episode(
     return idem.commit(202, content)
 
 
-@router.post("/v1/lines/{line_id}/regenerate", status_code=202)
+@router.post(
+    "/v1/lines/{line_id}/regenerate",
+    status_code=202,
+    response_model=RegenerateResponse,
+    responses={200: {"model": LineAudioResponse, "description": "캐시된 음원 반환"}},
+)
 def regenerate_line(
     line_id: str,
     request: Request,

@@ -3,7 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from app.schemas.common import StrictModel
-from app.schemas.episodes import ImageOut
+from app.schemas.episodes import ImageOut, JobBrief
 
 LineKind = Literal["dialogue", "narration", "description", "sfx_text", "ignore"]
 Emotion = Literal["neutral", "happy", "sad", "angry", "scared", "surprised", "confused", "whisper", "shout"]
@@ -135,7 +135,7 @@ class LineRegenerateRequest(StrictModel):
 
 
 class RegenerateResponse(BaseModel):
-    job: dict
+    job: JobBrief
 
 
 class LineAudioResponse(BaseModel):

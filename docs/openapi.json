@@ -1182,6 +1182,18 @@
         "title": "JobOut",
         "type": "object"
       },
+      "LineAudioResponse": {
+        "properties": {
+          "audio": {
+            "$ref": "#/components/schemas/AudioOut"
+          }
+        },
+        "required": [
+          "audio"
+        ],
+        "title": "LineAudioResponse",
+        "type": "object"
+      },
       "LineCreate": {
         "additionalProperties": false,
         "properties": {
@@ -2643,6 +2655,18 @@
           "scope"
         ],
         "title": "RegenerateRequest",
+        "type": "object"
+      },
+      "RegenerateResponse": {
+        "properties": {
+          "job": {
+            "$ref": "#/components/schemas/JobBrief"
+          }
+        },
+        "required": [
+          "job"
+        ],
+        "title": "RegenerateResponse",
         "type": "object"
       },
       "SeriesCreate": {
@@ -5789,7 +5813,9 @@
           "202": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/RegenerateResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -6652,10 +6678,22 @@
           }
         },
         "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LineAudioResponse"
+                }
+              }
+            },
+            "description": "캐시된 음원 반환"
+          },
           "202": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/RegenerateResponse"
+                }
               }
             },
             "description": "Successful Response"
