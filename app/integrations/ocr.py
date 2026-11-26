@@ -1,15 +1,21 @@
 """CLOVA OCR 추상화."""
 
 import base64
+import re
 import time
 import uuid
 from dataclasses import dataclass
+from io import BytesIO
 from typing import Protocol
 
 import httpx
+from PIL import Image, UnidentifiedImageError
 
 from app.config import Settings
 from app.integrations.http import UpstreamError, with_retries
+
+_OCR_LANGUAGES = frozenset({"ko", "ja", "zh-TW"})
+_NO_TEXT = re.compile(r'"errorCode"\s*:\s*"ENGN-001"\s*,\s*"errorMsg"\s*:\s*"NO_TEXT"')
 
 
 @dataclass
@@ -55,14 +61,30 @@ class ClovaOcrClient:
     ) -> list[OcrField]:
         if not self.url or not self.secret:
             raise UpstreamError("clova_ocr", "not configured", retryable=False)
-        fmt = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}.get(content_type, "png")
+        fmt = "jpg" if content_type == "image/jpeg" else "png"
+        if content_type == "image/webp":
+            try:
+                with Image.open(BytesIO(image), formats=["WEBP"]) as source, BytesIO() as output:
+                    rgba = source.convert("RGBA")
+                    background = Image.new("RGB", source.size, "white")
+                    background.paste(rgba, mask=rgba.getchannel("A"))
+                    background.save(output, format="JPEG", quality=95)
+                    image = output.getvalue()
+                    fmt = "jpg"
+            except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
+                raise UpstreamError(
+                    "clova_ocr", "WebP 이미지를 변환할 수 없습니다.", retryable=False
+                ) from exc
         body = {
             "version": "V2",
             "requestId": str(uuid.uuid4()),
             "timestamp": int(time.time() * 1000),
-            "lang": language,
             "images": [{"format": fmt, "name": "page", "data": base64.b64encode(image).decode()}],
         }
+        # 영어 등 별도 언어 코드가 없는 경우 도메인 기본 설정으로 인식한다.
+        lang = language.strip()
+        if lang in _OCR_LANGUAGES:
+            body["lang"] = lang
 
         def call() -> dict:
             res = self.http.post(
@@ -73,8 +95,10 @@ class ClovaOcrClient:
 
         data = with_retries("clova_ocr", call, self.max_retries)
         result = (data.get("images") or [{}])[0]
-        if result.get("inferResult") not in (None, "SUCCESS"):
-            raise UpstreamError("clova_ocr", str(result.get("message", "infer failed")), retryable=False)
+        if result.get("inferResult") != "SUCCESS":
+            if _NO_TEXT.search(str(result.get("message", ""))):
+                return []
+            raise UpstreamError("clova_ocr", "이미지 인식에 실패했습니다.", retryable=False)
         fields: list[OcrField] = []
         for field in result.get("fields", []):
             vertices = field.get("boundingPoly", {}).get("vertices", [])

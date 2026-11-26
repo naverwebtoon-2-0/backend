@@ -10,4 +10,5 @@ argon2-cffi
 pyjwt
 boto3
 httpx
+pillow
 tzdata

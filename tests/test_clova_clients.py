@@ -1,10 +1,13 @@
 """CLOVA 실제 클라이언트의 요청 형식·응답 해석·오류 매핑 (httpx MockTransport, 실제 키 없음)."""
 
+import base64
 import json
+from io import BytesIO
 from urllib.parse import parse_qs
 
 import httpx
 import pytest
+from PIL import Image
 
 from app.config import Settings
 from app.integrations import sfx_synth
@@ -113,6 +116,42 @@ def test_ocr_not_configured():
         ClovaOcrClient(_settings(clova_ocr_secret=""), http=_client(lambda r: httpx.Response(200))).recognize(
             b"x", "image/png", 1, 1, "ko"
         )
+
+
+def test_ocr_uses_domain_language_and_converts_webp():
+    source = BytesIO()
+    Image.new("RGBA", (80, 60), (0, 0, 0, 0)).save(source, format="WEBP")
+
+    def handler(request):
+        body = json.loads(request.content)
+        assert "lang" not in body
+        uploaded = body["images"][0]
+        assert uploaded["format"] == "jpg"
+        with Image.open(BytesIO(base64.b64decode(uploaded["data"]))) as image:
+            assert image.size == (80, 60)
+            assert image.getpixel((0, 0)) == (255, 255, 255)
+        return httpx.Response(200, json={"images": [{"inferResult": "SUCCESS", "fields": []}]})
+
+    client = ClovaOcrClient(_settings(), http=_client(handler))
+    assert client.recognize(source.getvalue(), "image/webp", 80, 60, "en") == []
+
+
+def test_ocr_accepts_pages_without_text():
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={
+                "images": [
+                    {
+                        "inferResult": "FAILURE",
+                        "message": '400 Bad Request: "{"errorCode":"ENGN-001","errorMsg":"NO_TEXT"}"',
+                    }
+                ]
+            },
+        )
+
+    client = ClovaOcrClient(_settings(), http=_client(handler))
+    assert client.recognize(b"image", "image/png", 80, 60, "ko") == []
 
 
 # ── Studio ──────────────────────────────────────────
