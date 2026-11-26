@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     app_env: Literal["development", "test", "production"] = "development"
     revision: str = "local"
     log_level: str = "INFO"
+    production_docs_enabled: bool = False
 
     database_url: str = "postgresql+psycopg://nw_app:nw_app@127.0.0.1:5432/naverwebtoon"
     cors_allowed_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)

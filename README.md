@@ -72,7 +72,8 @@ python scripts/export_openapi.py --check
 
 | 변수 | 기본값 | 설명 |
 |---|---|---|
-| `APP_ENV` | `development` | `production`이면 `/docs`·`/openapi.json` 비활성화, `JWT_SECRET` 검증 |
+| `APP_ENV` | `development` | `production`이면 `JWT_SECRET` 검증 |
+| `PRODUCTION_DOCS_ENABLED` | `false` (운영 Compose는 `true`) | 운영 Swagger `/v1/docs`와 명세 `/v1/openapi.json` 활성화 |
 | `REVISION` | `local` | `/healthz` 응답의 배포 리비전 (Docker 빌드 인자로 주입) |
 | `LOG_LEVEL` | `INFO` | JSON 로그 레벨 |
 | `DATABASE_URL` | `postgresql+psycopg://nw_app:...@127.0.0.1:5432/naverwebtoon` | 앱 DB 접속 (DML 역할) |

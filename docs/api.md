@@ -766,7 +766,7 @@ draft → uploaded → analyzing → synthesizing → needs_review ⇄ scheduled
 | GET | `/healthz` | 프로세스 상태, `revision` 반환 (배포 확인용) |
 | GET | `/readyz` | DB 연결 확인 |
 
-> `/docs`(OpenAPI)는 운영 환경에서 비활성화한다. 개발 환경에서는 FastAPI 자동 문서를 사용한다.
+> 운영 Swagger는 `/v1/docs`, 개발 Swagger는 `/docs`에서 열린다. 인증 API를 호출하려면 로그인 응답의 액세스 토큰을 Swagger의 **Authorize**에 입력한다.
 
 ---
 

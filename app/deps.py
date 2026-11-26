@@ -1,4 +1,5 @@
-from fastapi import Depends, Request
+from fastapi import Depends
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -6,18 +7,15 @@ from app.errors import forbidden, unauthorized
 from app.models import User
 from app.security import decode_access_token
 
-
-def _bearer(request: Request) -> str | None:
-    header = request.headers.get("authorization", "")
-    scheme, _, token = header.partition(" ")
-    if scheme.lower() != "bearer" or not token.strip():
-        return None
-    return token.strip()
+_bearer = HTTPBearer(auto_error=False, scheme_name="BearerAuth", bearerFormat="JWT")
 
 
-def get_optional_user(request: Request, db: Session = Depends(get_db)) -> User | None:
-    token = _bearer(request)
-    if token is None:
+def get_optional_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    db: Session = Depends(get_db),
+) -> User | None:
+    token = credentials.credentials.strip() if credentials else ""
+    if not token:
         return None
     payload = decode_access_token(token)
     if payload is None:
