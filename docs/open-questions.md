@@ -94,6 +94,7 @@
 | G8 | Docker 실행 검증 | 작성 PC에는 Docker가 없고 운영 서버는 SSH(22)가 막혀 있어 직접 실행하지 못했다. 대신 CI(GitHub Ubuntu 러너)에서 로컬용·운영용 compose로 `docker compose up` 후 헬스 체크와 스모크 테스트(`scripts/smoke.sh`)를 돌리도록 했다. **push 전이라 CI 실행 결과는 아직 없다** |
 | G9 | 효과음 음원 | CLOVA에 효과음 API가 없어 Object Storage `sfx/presets/{tag}.wav`를 우선 쓰고, 없으면 내장 생성기로 만든 기본 효과음(결정적)을 쓴다. 실제 효과음 음원으로 바꾸려면 프리셋 파일을 올린다 |
 | G10 | 서버 환경변수와 API 키 | Init Script가 DB 비밀번호·JWT 키·초대 코드를 무작위로 만든다. API 키·CORS origin·초대 코드는 `ops/secrets.env`(커밋 금지)로 Init Script에 넣는다. 서버를 만든 뒤 바꾸려면 콘솔 접속으로 `/etc/naverwebtoon-backend/backend.env`를 고친다 |
+| G11 | OCR 조각이 말풍선 하나를 여러 대사로 쪼갬 | CLOVA OCR은 단어마다 조각을 준다. 구조화 전에 `app/services/ocr_grouping.py`가 좌표만으로 조각을 줄(세로 겹침·가로 간격)과 말풍선(줄 간격·가운데 정렬·글자 크기)으로 묶고 위→아래, 왼쪽→오른쪽으로 정렬한다. 원문은 이어 붙이기만 한다. CLOVA Studio에는 말풍선을 `b1`… id로 보내 **id로만** 분류(종류·화자·감정, 잘못 나뉜 말풍선 합치기)를 받고, 글자·좌표는 서버가 원본에서 다시 만든다. 60개 단위로 나눠 보내고 앞 요청의 화자·직전 대사를 문맥으로 넘긴다. 모델이 빠뜨린 말풍선은 화자 미지정 대사로 남긴다. 묶는 기준값은 실제 원고로 아직 조정하지 않았다. 이미 분석한 회차는 다시 분석해야 적용된다 |
 ## H. OpenAPI와 api.md의 차이
 
 `docs/openapi.json`은 `scripts/export_openapi.py`로 생성한다(테스트가 최신 여부를 검사한다). api.md 대비 차이는 위 B·C 항목과 같고,
