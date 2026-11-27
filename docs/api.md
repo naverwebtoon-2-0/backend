@@ -63,6 +63,11 @@ Object Storage → CLOVA OCR → CLOVA Studio → CLOVA Dubbing → 작가 스�
 | 415 | `UNSUPPORTED_MEDIA` | 지원하지 않는 이미지 형식 |
 | 429 | `QUOTA_EXCEEDED` | AI 사용 쿼터 초과 |
 | 502 | `AI_UPSTREAM_ERROR` | CLOVA 호출 실패 |
+| 502 | `STORAGE_UPSTREAM_ERROR` | 백엔드의 Object Storage 호출 실패 |
+
+백엔드 오류의 `details`에는 원인과 요청 추적 ID가 포함된다. 외부 서비스 실패에는 `service`와 `upstream`도 함께 들어간다. `upstream.status`는 외부 서비스의 HTTP 상태이며, HTTP 200 응답 본문에서 실패를 보고하면 `upstream.code`와 `upstream.message`에 그 원인이 기록된다. 오류 코드나 추적 ID를 제공하지 않은 서비스의 해당 필드는 `null`이다. 비공개 URL과 인증 값은 가린다.
+
+비동기 분석은 `GET /v1/jobs/{job_id}`의 `error.details`에서 확인한다. 일부 대사나 효과음만 실패한 경우 `warnings`에 남고, 대사 실패는 스튜디오 및 대사 조회의 `audio.error`에도 표시된다. CLOVA Studio가 정상 상태로 응답했으나 결과 형식이 잘못된 경우 OCR 원문을 사용하고 `warnings`에 상세 원인을 남긴다.
 
 ---
 
@@ -80,7 +85,7 @@ draft → uploaded → analyzing → synthesizing → needs_review ⇄ scheduled
 |---|---|
 | `draft` | 회차만 만들어 둔 상태 (이미지 없음) |
 | `uploaded` | 이미지 업로드 완료, 분석 전 |
-| `analyzing` | OCR + CLOVA Studio로 대사·인물·감정 정리 중 |
+| `analyzing` | OCR + CLOVA Studio로 대사·인물·감정 정리 중. 긴 원고는 OCR 요청에서 나눠 처리하고 원본 좌표로 합친다 |
 | `synthesizing` | CLOVA Dubbing으로 음성·효과음 생성 중 |
 | `needs_review` | 분석·음성 생성 완료. 작가 스튜디오에서 검수·수정 (일부 대사 재생성은 이 상태 안에서 진행) |
 | `scheduled` | 예약 게시 대기 (`scheduled_at`에 스케줄러가 게시) |
@@ -766,7 +771,7 @@ draft → uploaded → analyzing → synthesizing → needs_review ⇄ scheduled
 | GET | `/healthz` | 프로세스 상태, `revision` 반환 (배포 확인용) |
 | GET | `/readyz` | DB 연결 확인 |
 
-> `/docs`(OpenAPI)는 운영 환경에서 비활성화한다. 개발 환경에서는 FastAPI 자동 문서를 사용한다.
+> 운영 Swagger는 `/v1/docs`, 개발 Swagger는 `/docs`에서 열린다. 인증 API를 호출하려면 로그인 응답의 액세스 토큰을 Swagger의 **Authorize**에 입력한다.
 
 ---
 

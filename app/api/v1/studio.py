@@ -7,10 +7,9 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import require_author
-from app.errors import ApiError, not_found, validation_error
+from app.errors import not_found, validation_error
 from app.idempotency import Idempotency
 from app.integrations import get_integrations
-from app.integrations.http import UpstreamError
 from app.models import (
     AudioAsset,
     Character,
@@ -75,10 +74,6 @@ def _series_character(db: Session, episode: Episode, character_id: str) -> Chara
 
 def _sfx_tags() -> set[str]:
     return {p["tag"] for p in get_integrations().dubbing.list_sfx_presets()}
-
-
-def _upstream(exc: UpstreamError) -> ApiError:
-    return ApiError(502, "AI_UPSTREAM_ERROR", "CLOVA 호출에 실패했습니다.", {"service": exc.service})
 
 
 # ── 스튜디오 일괄 조회 ─────────────────────────────────
@@ -310,10 +305,7 @@ def create_sfx_cue(
     _episode_image(db, episode, body.image_id)
     if body.sfx_tag not in _sfx_tags():
         raise validation_error("알 수 없는 효과음 프리셋입니다.", field="sfx_tag")
-    try:
-        asset = sfx_asset(db, get_integrations(), body.sfx_tag)
-    except UpstreamError as exc:
-        raise _upstream(exc) from exc
+    asset = sfx_asset(db, get_integrations(), body.sfx_tag)
     cue = SfxCue(
         episode_id=episode.id,
         image_id=body.image_id,
@@ -349,10 +341,7 @@ def update_sfx_cue(
     if "sfx_tag" in fields and fields["sfx_tag"] != cue.sfx_tag:
         if fields["sfx_tag"] not in _sfx_tags():
             raise validation_error("알 수 없는 효과음 프리셋입니다.", field="sfx_tag")
-        try:
-            asset = sfx_asset(db, get_integrations(), fields["sfx_tag"])
-        except UpstreamError as exc:
-            raise _upstream(exc) from exc
+        asset = sfx_asset(db, get_integrations(), fields["sfx_tag"])
         cue.sfx_tag, cue.asset_id, cue.duration_ms = fields["sfx_tag"], asset.id, asset.duration_ms
     if fields:
         mark_changed(episode)

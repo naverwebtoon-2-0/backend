@@ -45,6 +45,8 @@ def configure_logging(level: str = "INFO") -> None:
     root.setLevel(level.upper())
     # uvicorn 접근 로그는 쿼리 문자열을 남기므로 끄고, 아래 미들웨어가 경로만 기록한다.
     logging.getLogger("uvicorn.access").disabled = True
+    # OCR 호출 URL에는 비공개 경로가 포함되므로 HTTP 클라이언트 접근 로그를 남기지 않는다.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     for name in ("uvicorn", "uvicorn.error"):
         logging.getLogger(name).handlers[:] = []
         logging.getLogger(name).propagate = True
@@ -63,6 +65,7 @@ class RequestContextMiddleware:
             return
         incoming = dict(scope.get("headers") or []).get(b"x-request-id", b"").decode("latin-1")
         request_id = incoming if 0 < len(incoming) <= 64 and incoming.isprintable() else uuid.uuid4().hex
+        scope.setdefault("state", {})["request_id"] = request_id
         token = request_id_var.set(request_id)
         started = time.perf_counter()
         status = 500

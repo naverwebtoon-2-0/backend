@@ -1,10 +1,13 @@
 """CLOVA 실제 클라이언트의 요청 형식·응답 해석·오류 매핑 (httpx MockTransport, 실제 키 없음)."""
 
+import base64
 import json
+from io import BytesIO
 from urllib.parse import parse_qs
 
 import httpx
 import pytest
+from PIL import Image
 
 from app.config import Settings
 from app.integrations import sfx_synth
@@ -117,6 +120,99 @@ def test_ocr_not_configured():
         )
 
 
+def test_ocr_uses_domain_language_and_converts_webp():
+    source = BytesIO()
+    Image.new("RGBA", (80, 60), (0, 0, 0, 0)).save(source, format="WEBP")
+
+    def handler(request):
+        body = json.loads(request.content)
+        assert "lang" not in body
+        uploaded = body["images"][0]
+        assert uploaded["format"] == "jpg"
+        with Image.open(BytesIO(base64.b64decode(uploaded["data"]))) as image:
+            assert image.size == (80, 60)
+            assert image.getpixel((0, 0)) == (255, 255, 255)
+        return httpx.Response(200, json={"images": [{"inferResult": "SUCCESS", "fields": []}]})
+
+    client = ClovaOcrClient(_settings(), http=_client(handler))
+    assert client.recognize(source.getvalue(), "image/webp", 80, 60, "en") == []
+
+
+def test_ocr_accepts_pages_without_text():
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={
+                "images": [
+                    {
+                        "inferResult": "FAILURE",
+                        "message": '400 Bad Request: "{"errorCode":"ENGN-001","errorMsg":"NO_TEXT"}"',
+                    }
+                ]
+            },
+        )
+
+    client = ClovaOcrClient(_settings(), http=_client(handler))
+    assert client.recognize(b"image", "image/png", 80, 60, "ko") == []
+
+
+def test_ocr_long_page_tiles_keep_coordinates_and_ignore_duplicate_text():
+    source = BytesIO()
+    Image.new("RGB", (40, 10277), "white").save(source, format="PNG")
+    sizes = []
+
+    def row(text, y):
+        return {"inferText": text, "boundingPoly": {"vertices": [{"x": 1, "y": y}, {"x": 5, "y": y + 4}]}}
+
+    def handler(request):
+        image = json.loads(request.content)["images"][0]
+        with Image.open(BytesIO(base64.b64decode(image["data"]))) as tile:
+            sizes.append(tile.size)
+        fields = [row("겹친 글자", 7850)] if len(sizes) == 1 else [row("겹친 글자", 107), row("아래", 700)]
+        return httpx.Response(200, json={"images": [{"inferResult": "SUCCESS", "fields": fields}]})
+
+    fields = ClovaOcrClient(_settings(), http=_client(handler)).recognize(
+        source.getvalue(), "image/png", 40, 10277, "ko"
+    )
+    assert sizes == [(40, 7999), (40, 2534)]
+    assert [field.text for field in fields] == ["겹친 글자", "아래"]
+    assert fields[1].bbox["y"] == round(8443 / 10277, 4)
+
+
+def test_ocr_http_200_reports_engine_failure():
+    def handler(request):
+        message = '400 Bad Request: "{"errorCode":"ENGN-010","errorMsg":"Image resolution limit exceeded"}"'
+        return httpx.Response(
+            200, json={"requestId": "ocr-123", "images": [{"inferResult": "ERROR", "message": message}]}
+        )
+
+    with pytest.raises(UpstreamError) as caught:
+        ClovaOcrClient(_settings(), http=_client(handler)).recognize(b"image", "image/png", 80, 60, "ko")
+    detail = caught.value.details()["upstream"]
+    assert detail["status"] == 200 and detail["code"] == "ENGN-010"
+    assert detail["message"] == "Image resolution limit exceeded" and detail["request_id"] == "ocr-123"
+
+
+def test_provider_http_error_returns_code_and_masks_private_url():
+    def handler(request):
+        return httpx.Response(
+            401,
+            headers={"X-NCP-APIGW-Request-Id": "gw-123"},
+            json={
+                "error": {
+                    "errorCode": "200",
+                    "message": "Authentication failed at https://private.example/path",
+                }
+            },
+        )
+
+    with pytest.raises(UpstreamError) as caught:
+        ClovaVoiceClient(_settings(), http=_client(handler)).synthesize("안녕", "nara", {}, "neutral")
+    detail = caught.value.details()["upstream"]
+    assert detail["status"] == 401 and detail["code"] == "200" and not detail["retryable"]
+    assert detail["request_id"] == "gw-123" and detail["message"] == "Authentication failed at [가림]"
+
+
 # ── Studio ──────────────────────────────────────────
 
 
@@ -214,14 +310,30 @@ def test_structure_invalid_response():
         )
 
     pages = [PageInput("a", [_balloon("안녕", 0.1)])]
-    with pytest.raises(UpstreamError):
+    with pytest.raises(UpstreamError) as caught:
         ClovaStructureClient(_settings(), [], http=_client(handler)).structure(pages, [], {})
+    # 파이프라인이 말풍선 원문으로 대체하는 조건
+    assert caught.value.code == "INVALID_RESPONSE" and caught.value.status == 200
 
     def failed(request):
         return httpx.Response(200, json={"status": {"code": "40001"}, "result": None})
 
     with pytest.raises(UpstreamError):
         ClovaStructureClient(_settings(), [], http=_client(failed)).structure(pages, [], {})
+
+
+def test_structure_preserves_ocr_for_missing_page():
+    def handler(request):
+        content = json.dumps({"lines": [{"image_id": "invalid", "text": "다른 페이지"}]})
+        return httpx.Response(200, json={"result": {"message": {"content": content}}})
+
+    fields = [{"text": "OCR 원문", "bbox": {"y": 0.4}, "confidence": 0.9}]
+    result = ClovaStructureClient(_settings(), [], http=_client(handler)).structure(
+        [PageInput("stored-id", fields), PageInput("blank", [])], [], {}
+    )
+    assert [(line.image_id, line.text, line.ocr_confidence) for line in result.lines] == [
+        ("stored-id", "OCR 원문", 0.9)
+    ]
 
 
 # ── Voice ───────────────────────────────────────────

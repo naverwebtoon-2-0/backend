@@ -85,6 +85,7 @@ def job_view(job: Job) -> dict:
         "progress": {"done": job.progress_done, "total": job.progress_total},
         "eta_seconds": eta_seconds(job),
         "error": job.error,
+        "warnings": job.warnings or [],
         "created_at": job.created_at,
         "started_at": job.started_at,
         "finished_at": job.finished_at,
@@ -181,6 +182,7 @@ def audio_view(line: DialogueLine, asset: AudioAsset | None) -> dict | None:
         "url": signed_get(asset.object_key) if asset else None,
         "duration_ms": asset.duration_ms if asset else None,
         "status": line.audio_status,
+        "error": line.audio_error if line.audio_status == "failed" else None,
     }
 
 

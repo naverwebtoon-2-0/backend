@@ -8,6 +8,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.integrations.http import UpstreamError
+from app.logging import request_id_var
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,8 +69,11 @@ def quota_exceeded(metric: str, used: int, limit: int, requested: int) -> ApiErr
     )
 
 
-def _body(code: str, message: str, details: Any = None) -> dict[str, Any]:
-    return {"error": {"code": code, "message": message, "details": details}}
+def _body(code: str, message: str, details: dict | None = None) -> dict[str, Any]:
+    detail = {"reason": message, **(details or {})}
+    if request_id := request_id_var.get():
+        detail["request_id"] = request_id
+    return {"error": {"code": code, "message": message, "details": detail}}
 
 
 _STATUS_CODES = {
@@ -82,6 +88,11 @@ _STATUS_CODES = {
 
 
 def install_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(UpstreamError)
+    async def _upstream(_: Request, exc: UpstreamError) -> JSONResponse:
+        logger.warning("external request failed", extra=exc.details())
+        return JSONResponse(_body(exc.app_code, exc.message, exc.details()), status_code=502)
+
     @app.exception_handler(ApiError)
     async def _api_error(_: Request, exc: ApiError) -> JSONResponse:
         return JSONResponse(
@@ -107,6 +118,15 @@ def install_error_handlers(app: FastAPI) -> None:
         return JSONResponse(_body(code, message), status_code=exc.status_code, headers=exc.headers)
 
     @app.exception_handler(Exception)
-    async def _unhandled(_: Request, exc: Exception) -> JSONResponse:
-        logger.exception("unhandled error", exc_info=exc)
-        return JSONResponse(_body("INTERNAL_ERROR", "서버 오류가 발생했습니다."), status_code=500)
+    async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
+        request_id = getattr(request.state, "request_id", None)
+        logger.exception("unhandled error", exc_info=exc, extra={"request_id": request_id})
+        return JSONResponse(
+            _body(
+                "INTERNAL_ERROR",
+                "서버 오류가 발생했습니다.",
+                {"request_id": request_id, "type": type(exc).__name__},
+            ),
+            status_code=500,
+            headers={"X-Request-ID": request_id} if request_id else None,
+        )

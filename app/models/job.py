@@ -38,6 +38,7 @@ class Job(IdMixin, CreatedMixin, Base):
     progress_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     error: Mapped[dict | None] = mapped_column(JSONB)
+    warnings: Mapped[list[dict] | None] = mapped_column(JSONB)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # ETA 계산용: 단계 시작 시각과 단계별 항목당 평균 처리 시간(초)

@@ -9,10 +9,28 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class UpstreamDetails(BaseModel):
+    status: int | None = None
+    code: str | None = None
+    message: str
+    request_id: str | None = None
+    retryable: bool
+    operation: str | None = None
+
+
+class ErrorDetails(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    reason: str | None = None
+    request_id: str | None = None
+    service: str | None = None
+    upstream: UpstreamDetails | None = None
+
+
 class ErrorBody(BaseModel):
     code: str
     message: str
-    details: dict[str, Any] | None = None
+    details: ErrorDetails | None = None
 
 
 class ErrorResponse(BaseModel):
@@ -25,5 +43,5 @@ class Page[T](BaseModel):
 
 
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
-    code: {"model": ErrorResponse} for code in (400, 401, 403, 404, 409)
+    code: {"model": ErrorResponse} for code in (400, 401, 403, 404, 409, 500, 502)
 }

@@ -72,7 +72,8 @@ python scripts/export_openapi.py --check
 
 | 변수 | 기본값 | 설명 |
 |---|---|---|
-| `APP_ENV` | `development` | `production`이면 `/docs`·`/openapi.json` 비활성화, `JWT_SECRET` 검증 |
+| `APP_ENV` | `development` | `production`이면 `JWT_SECRET` 검증 |
+| `PRODUCTION_DOCS_ENABLED` | `false` (운영 Compose는 `true`) | 운영 Swagger `/v1/docs`와 명세 `/v1/openapi.json` 활성화 |
 | `REVISION` | `local` | `/healthz` 응답의 배포 리비전 (Docker 빌드 인자로 주입) |
 | `LOG_LEVEL` | `INFO` | JSON 로그 레벨 |
 | `DATABASE_URL` | `postgresql+psycopg://nw_app:...@127.0.0.1:5432/naverwebtoon` | 앱 DB 접속 (DML 역할) |
@@ -144,8 +145,8 @@ push main → CI: 테스트 · docker build · docker compose up 검증(로컬�
           → 실패하면 직전 릴리스로 되돌림
 ```
 
-1. (선택) `cp ops/secrets.env.example ops/secrets.env` 후 API 키·CORS origin·초대 코드를 채운다. 이 파일은 커밋되지 않는다.
-2. `bash ops/render-init-script.sh > init-script.sh`로 Linux Init Script를 만든다. `ops/secrets.env`가 있으면 그 값이 서버 환경변수에 들어간다.
+1. 외부 연동 값과 `BACKEND_CONFIG_SSH_KEY`를 백엔드 저장소의 GitHub Actions Secrets에 등록한다.
+2. `bash ops/render-init-script.sh > init-script.sh`로 Linux Init Script를 만든다. 외부 연동 키는 이 파일에 넣지 않는다.
 3. Ubuntu 24.04 x86-64 서버(메모리 2GB 이상 권장: PostgreSQL + API + 워커)를 Public Subnet에 만들고 Init Script와 공인 IPv4를 지정한다.
    전용 ACG 인바운드는 TCP 80(ACME)과 443(HTTPS)만 허용한다.
 4. Init Script가 Docker·Nginx·certbot을 설치하고 `/etc/naverwebtoon-backend/backend.env`(DB 비밀번호·JWT 키는 무작위 생성)를 만든다.
@@ -155,7 +156,6 @@ push main → CI: 테스트 · docker build · docker compose up 검증(로컬�
 서버에서 상태 확인: `journalctl -u naverwebtoon-backend-update.service`(배포), `journalctl -u naverwebtoon-backend-tls.service`(인증서),
 `naverwebtoon-backend-compose ps` / `logs`(컨테이너).
 
-키를 나중에 바꾸려면 서버의 `/etc/naverwebtoon-backend/backend.env`를 고친 뒤 `naverwebtoon-backend-compose up -d`를 실행한다
-(ACG가 SSH를 막고 있으므로 콘솔 접속이 필요하다). 또는 `ops/secrets.env`로 Init Script를 다시 만들어 서버를 새로 만든다.
+키를 변경하면 GitHub Actions Secrets를 수정하고 main 워크플로를 실행한다. 운영 서버의 제한된 SSH 키는 연동 설정 적용 명령만 실행한다. 서버를 새로 만들면 이 명령과 공개 키를 다시 설치해야 한다.
 
 남은 일: 실제 API 키를 넣은 뒤 CLOVA OCR·Studio·Voice 호출 확인 (요청 형식은 문서 기준으로 구현하고 가짜 HTTP로 테스트했다).
