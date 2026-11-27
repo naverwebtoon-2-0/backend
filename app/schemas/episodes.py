@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.schemas.common import StrictModel
+from app.schemas.common import ErrorDetails, StrictModel
 from app.schemas.series import FileSpec
 
 
@@ -146,7 +146,7 @@ class ProcessResponse(BaseModel):
 class JobError(BaseModel):
     code: str
     message: str
-    details: dict | None = None
+    details: ErrorDetails | None = None
 
 
 class JobOut(BaseModel):
@@ -158,6 +158,7 @@ class JobOut(BaseModel):
     progress: Progress
     eta_seconds: int | None
     error: JobError | None
+    warnings: list[JobError] = Field(default_factory=list)
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None

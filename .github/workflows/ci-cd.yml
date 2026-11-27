@@ -203,3 +203,29 @@ jobs:
           done
           echo '운영 서버에서 이 릴리스를 확인하지 못했습니다.'
           exit 1
+      - name: Apply runtime secrets
+        env:
+          BACKEND_CONFIG_SSH_KEY: ${{ secrets.BACKEND_CONFIG_SSH_KEY }}
+          AUTHOR_INVITE_CODES: ${{ secrets.AUTHOR_INVITE_CODES }}
+          STORAGE_BUCKET: ${{ secrets.STORAGE_BUCKET }}
+          STORAGE_ACCESS_KEY: ${{ secrets.STORAGE_ACCESS_KEY }}
+          STORAGE_SECRET_KEY: ${{ secrets.STORAGE_SECRET_KEY }}
+          CLOVA_OCR_INVOKE_URL: ${{ secrets.CLOVA_OCR_INVOKE_URL }}
+          CLOVA_OCR_SECRET: ${{ secrets.CLOVA_OCR_SECRET }}
+          CLOVA_STUDIO_API_KEY: ${{ secrets.CLOVA_STUDIO_API_KEY }}
+          CLOVA_VOICE_CLIENT_ID: ${{ secrets.CLOVA_VOICE_CLIENT_ID }}
+          CLOVA_VOICE_CLIENT_SECRET: ${{ secrets.CLOVA_VOICE_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$BACKEND_CONFIG_SSH_KEY" > "$HOME/.ssh/backend-config"
+          printf '%s\n' '211.233.198.172 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGbNonSILyIqnWG2+cTmYQtYvRgGGiVHvHfCt+c4FdXt' > "$HOME/.ssh/known_hosts"
+          python3 - <<'PY' | ssh -T -i "$HOME/.ssh/backend-config" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes root@211.233.198.172
+          import json, os
+          names = ('AUTHOR_INVITE_CODES', 'STORAGE_BUCKET', 'STORAGE_ACCESS_KEY', 'STORAGE_SECRET_KEY', 'CLOVA_OCR_INVOKE_URL', 'CLOVA_OCR_SECRET', 'CLOVA_STUDIO_API_KEY', 'CLOVA_VOICE_CLIENT_ID', 'CLOVA_VOICE_CLIENT_SECRET')
+          values = {name: os.environ[name] for name in names}
+          if not all(values.values()):
+              raise SystemExit('운영 연동 Secrets가 비어 있습니다.')
+          print(json.dumps(values))
+          PY

@@ -13,7 +13,13 @@ from typing import Protocol
 import httpx
 
 from app.config import Settings
-from app.integrations.http import UpstreamError, with_retries
+from app.integrations.http import (
+    UpstreamError,
+    json_response,
+    provider_error,
+    response_request_id,
+    with_retries,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +52,26 @@ class StructuredSfx:
 class StructureResult:
     lines: list[StructuredLine] = field(default_factory=list)
     sfx: list[StructuredSfx] = field(default_factory=list)
+
+
+def structure_from_ocr(pages: list[PageInput]) -> StructureResult:
+    """Studio 결과를 쓸 수 없을 때 말풍선 원문을 화자 미지정 대사로 남긴다(작가가 검수에서 정리)."""
+    result = StructureResult()
+    for page in pages:
+        for balloon in page.balloons:
+            if text := balloon["text"].strip():
+                result.lines.append(
+                    StructuredLine(
+                        page.image_id,
+                        text,
+                        balloon.get("bbox"),
+                        "dialogue",
+                        None,
+                        "neutral",
+                        balloon.get("confidence"),
+                    )
+                )
+    return result
 
 
 class StructureClient(Protocol):
@@ -158,7 +184,7 @@ class ClovaStructureClient:
             "maxTokens": 4096,
         }
 
-        def call() -> dict:
+        def call() -> httpx.Response:
             res = self.http.post(
                 self.url,
                 json=body,
@@ -166,26 +192,55 @@ class ClovaStructureClient:
                 timeout=self.timeout,
             )
             res.raise_for_status()
-            return res.json()
+            return res
 
-        data = with_retries("clova_studio", call, self.max_retries)
-        status = (data.get("status") or {}).get("code")
-        if status not in (None, "20000"):
-            raise UpstreamError("clova_studio", f"status {status}", retryable=False)
+        response = with_retries("clova_studio", call, self.max_retries)
+        data = json_response("clova_studio", response)
+        code, message = provider_error(data)
+        request_id = response_request_id(response)
+        if code not in (None, "20000"):
+            raise UpstreamError(
+                "clova_studio",
+                message or f"CLOVA Studio 상태 {code}",
+                False,
+                status=response.status_code,
+                code=code,
+                request_id=request_id,
+            )
         try:
             content = data["result"]["message"]["content"]
+            if isinstance(content, list):
+                content = "\n".join(
+                    part["text"]
+                    for part in content
+                    if isinstance(part, dict) and isinstance(part.get("text"), str)
+                )
+            if not isinstance(content, str):
+                raise ValueError("missing response text")
             parsed = json.loads(content[content.index("{") : content.rindex("}") + 1])
+            if not isinstance(parsed, dict) or not isinstance(parsed.get("lines"), list):
+                raise ValueError("missing lines")
+            if not isinstance(parsed.get("sfx", []), list):
+                raise ValueError("invalid sfx")
         except (KeyError, ValueError, TypeError) as exc:
-            raise UpstreamError("clova_studio", "invalid response", retryable=False) from exc
-        if not isinstance(parsed, dict):
-            raise UpstreamError("clova_studio", "invalid response", retryable=False)
+            # 파이프라인은 이 코드(INVALID_RESPONSE, HTTP 200)일 때 말풍선 원문으로 대사를 만든다.
+            raise UpstreamError(
+                "clova_studio",
+                "모델 결과에 유효한 대사 JSON이 없습니다.",
+                False,
+                status=response.status_code,
+                code="INVALID_RESPONSE",
+                request_id=request_id,
+            ) from exc
         return parsed
 
     def structure(
         self, pages: list[PageInput], known_characters: list[str], options: dict
     ) -> StructureResult:
         if not self.api_key:
-            raise UpstreamError("clova_studio", "not configured", retryable=False)
+            raise UpstreamError(
+                "clova_studio", "CLOVA Studio API 키가 비어 있습니다.", False, code="NOT_CONFIGURED"
+            )
         result = StructureResult()
         speakers = list(known_characters)
         previous: list[dict] = []

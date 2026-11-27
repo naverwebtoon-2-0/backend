@@ -57,6 +57,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://nw_app:${NW_APP_PASSWORD}@db:5432/naverwebtoon
       REVISION: ${REVISION}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://naverwebtoon-2-0.vercel.app,http://localhost:4173}
+      PRODUCTION_DOCS_ENABLED: ${PRODUCTION_DOCS_ENABLED:-true}
       # nginx(호스트)만 접근하므로 프록시 헤더를 신뢰한다 (포트는 127.0.0.1에만 열림)
       FORWARDED_ALLOW_IPS: "*"
     ports:

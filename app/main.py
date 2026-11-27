@@ -17,13 +17,16 @@ _NO_STORE = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings.log_level)
-    docs = not settings.is_production
+    docs_enabled = not settings.is_production or settings.production_docs_enabled
+    docs_prefix = "/v1" if settings.is_production else ""
     app = FastAPI(
         title="naverwebtoon 2.0 API",
         version="0.3",
-        docs_url="/docs" if docs else None,
+        docs_url=f"{docs_prefix}/docs" if docs_enabled else None,
         redoc_url=None,
-        openapi_url="/openapi.json" if docs else None,
+        openapi_url=f"{docs_prefix}/openapi.json" if docs_enabled else None,
+        swagger_ui_oauth2_redirect_url=None,
+        swagger_ui_parameters={"persistAuthorization": False, "validatorUrl": None},
     )
     install_error_handlers(app)
     if settings.cors_allowed_origins:
